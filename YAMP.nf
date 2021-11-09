@@ -61,9 +61,12 @@ if (params.help) {
 	System.out.println("    --mode     <QC|characterisation|complete>")
 	System.out.println("Options:")
 	System.out.println("    --librarylayout <single|paired>")
-	System.out.println("    --dedup         <true|false>   whether to perform de-duplication")
+	System.out.println("    --dedup         <true|false>   whether to perform de-duplication. Default: false")
+	System.out.println("    --decontaminate	<true|false>   whether to decontaminate of human reads. Default: true")
 	System.out.println("    --keepQCtmpfile <true|false>   whether to save QC temporary files")
 	System.out.println("    --keepCCtmpfile <true|false>   whether to save community characterisation temporary files")
+	System.out.println("    --adapters filepath   FASTA containing adapters to be trimmed. Default: /local/projects/drasko/thazen/scripts/illumina.adapters.current.fasta.txt")
+	System.out.println("    --phix174ill filepath   FASTA containing synthetic contaminants to be removed. Default: /local/projects/drasko/thazen/scripts/phiX174.fas")
 	System.out.println("Please refer to nextflow.config for more options.")
 	System.out.println("")
 	System.out.println("Container:")
@@ -294,6 +297,7 @@ process dedup {
 
 	script:
 	"""
+	set -e
 	#Measures execution time
 	sysdate=\$(date)
 	starttime=\$(date +%s.%N)
@@ -301,7 +305,7 @@ process dedup {
 	echo \" \" >> .log.2
 	
 	#Sets the maximum memory to the value requested in the config file
-	maxmem=\$(echo \"$task.memory\" | sed 's/ //g' | sed 's/B//g')
+	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
 	
 	#Defines command for de-duplication
 	if [ \"$params.librarylayout\" = \"paired\" ]; then
@@ -394,13 +398,15 @@ process trim {
 	echo \" \" >> .log.3
 
 	#Sets the maximum memory to the value requested in the config file
-	maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
+	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
 
 	#Defines command for trimming of adapters and low quality bases
+	# Consider switching to trimmmomatic for more sensitive removal of low-quality bases
+	# SLIDINGWINDOW:4:3
 	if [ \"$params.librarylayout\" = \"paired\" ]; then
-		CMD=\"bbduk.sh -Xmx\"\$maxmem\" in=$reads1 in2=$reads2 out=${params.prefix}_trimmed_R1_tmp.fq out2=${params.prefix}_trimmed_R2_tmp.fq outs=${params.prefix}_trimmed_singletons_tmp.fq ktrim=r k=$params.kcontaminants mink=$params.mink hdist=$params.hdist qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters qin=$params.qin threads=${task.cpus} tbo tpe ow\"
+		CMD=\"bbduk.sh -Xmx\"\$maxmem\" in=$reads1 in2=$reads2 out=${params.prefix}_trimmed_R1_tmp.fq out2=${params.prefix}_trimmed_R2_tmp.fq outs=${params.prefix}_trimmed_singletons_tmp.fq ktrim=r k=$params.kcontaminants mink=$params.mink hdist=$params.hdist hdist2=$params.hdist2 qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters qin=$params.qin threads=${task.cpus} tbo tpe ow\"
 	else
-		CMD=\"bbduk.sh -Xmx\"\$maxmem\" in=$reads1 out=${params.prefix}_trimmed_tmp.fq ktrim=r k=$params.kcontaminants mink=$params.mink hdist=$params.hdist qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters qin=$params.qin threads=${task.cpus} tbo tpe ow\"
+		CMD=\"bbduk.sh -Xmx\"\$maxmem\" in=$reads1 out=${params.prefix}_trimmed_tmp.fq ktrim=r k=$params.kcontaminants mink=$params.mink hdist=$params.hdist hdist2=$params.hdist2 maq=$params.maq mlf=$params.mlf qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters qin=$params.qin threads=${task.cpus} tbo tpe ow\"
 	fi
 	
 	#Logs version of the software and executed command (BBMap prints on stderr)
@@ -427,6 +433,7 @@ process trim {
 	fi
 
 	#Defines command for removing synthetic contaminants
+	#"Artifacts" esems to be Illumina control sequences?
 	if [ \"$params.librarylayout\" = \"paired\" ]; then
 		CMD=\"bbduk.sh -Xmx\"\$maxmem\" in=${params.prefix}_trimmed_R1_tmp.fq in2=${params.prefix}_trimmed_R2_tmp.fq out=${params.prefix}_trimmed_R1.fq out2=${params.prefix}_trimmed_R2.fq k=31 ref=$phix174ill,$artifacts qin=$params.qin threads=${task.cpus} ow\"
 	else
@@ -525,10 +532,11 @@ process decontaminate {
 	file "${params.prefix}_cont.fq" into topublishdecontaminate
 
 	when:
-	params.mode == "QC" || params.mode == "complete"
+	(params.mode == "QC" || params.mode == "complete") &&  params.decontaminate
 	
 	script:
 	"""
+	set -e
 	#Measures execution time
 	sysdate=\$(date)
 	starttime=\$(date +%s.%N)
@@ -536,7 +544,7 @@ process decontaminate {
 	echo \" \" >> .log.5
 
 	#Sets the maximum memory to the value requested in the config file
-	maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
+	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
 	
 	#Defines command for decontamination
 	if [ \"$params.librarylayout\" = \"paired\" ]; then
@@ -609,12 +617,12 @@ process decontaminate {
 //Creates the correct objects for the quality assessment, by merging the files derived from
 //trimming and decontamination and the step number, label and step.
 if (params.librarylayout == "paired") {
-	trimmedreads2qc = Channel.from('4').combine(trimmedreads.flatMap().merge( Channel.from( ['_R1', '_R2'] ) ){ a, b -> [a, b] }).combine(Channel.from('_trimmedreads'))
+	trimmedreads2qc = Channel.from('4').combine(trimmedreads.flatMap().merge( Channel.from( ['_R1', '_R2'] ) ){ a, b -> [a, b] }).combine(Channel.from('_trimmed'))
 } 
 else {
-	trimmedreads2qc = Channel.from('4').combine(trimmedreads.flatMap()).combine( Channel.from( '' ) ).combine(Channel.from('_trimmedreads'))
+	trimmedreads2qc = Channel.from('4').combine(trimmedreads.flatMap()).combine( Channel.from( '' ) ).combine(Channel.from('_trimmed'))
 }
-decontaminatedreads2qc = Channel.from('6').combine(decontaminatedreads).combine( Channel.from( '' ) ).combine(Channel.from('_decontaminatedreads'))
+decontaminatedreads2qc = Channel.from('6').combine(decontaminatedreads).combine( Channel.from( '' ) ).combine(Channel.from('_clean'))
 
 //Creates the channel which performs the QC
 toQC = rawreads.mix(trimmedreads2qc, decontaminatedreads2qc) 
@@ -703,37 +711,35 @@ process profileTaxa {
 	
 	input:
 	file(infile) from toprofiletaxa
-	file(mpa_pkl) from Channel.from( file(params.mpa_pkl) )
-	file(bowtie2db) from Channel.fromPath( params.bowtie2db, type: 'dir' )
+	file(kraken2_db) from Channel.fromPath( params.kraken2_db, type: 'dir' )
 
     output:
 	file ".log.7" into log7
-	file "${params.prefix}.biom" into toalphadiversity
-	file "${params.prefix}_metaphlan_bugs_list.tsv" into toprofilefunctionbugs
-	file "${params.prefix}_bt2out.txt" into topublishprofiletaxa
+	// file "${params.prefix}.biom" into toalphadiversity
+	file "${params.prefix}_kraken_taxa_to_read_counts.tsv"
+	file "${params.prefix}_kraken_reads_to_taxa.txt"
+	// file "${params.prefix}_bt2out.txt" into topublishprofiletaxa
 
 	when:
 	params.mode == "characterisation" || params.mode == "complete"
 
 	script:
 	"""
+	set -e
 	#Measures execution time
 	sysdate=\$(date)
 	starttime=\$(date +%s.%N)
-	echo \"Performing Community Characterisation. STEP 1 [Taxonomic binning and profiling] at \$sysdate\" > .log.7
+	echo \"Performing Community Characterisation. STEP 1 [Taxonomic profiling] at \$sysdate\" > .log.7
 	echo \" \" >> .log.7
 	
-	#If a file with the same name is already present, Metaphlan2 will crash
-	rm -rf ${params.prefix}_bt2out.txt
-	
 	#Defines command for estimating abundances
-	CMD=\"metaphlan2.py --input_type fastq --tmp_dir=. --biom ${params.prefix}.biom --bowtie2out=${params.prefix}_bt2out.txt --mpa_pkl $mpa_pkl  --bowtie2db $bowtie2db/$params.bowtie2dbfiles --bt2_ps $params.bt2options --nproc ${task.cpus} $infile ${params.prefix}_metaphlan_bugs_list.tsv\"
+	CMD=\"kraken2 --db $kraken2_db $infile --confidence 0.05 --threads ${task.cpus} --report ${params.prefix}_kraken_taxa_to_read_counts.tsv --use-mpa-style --output ${params.prefix}_kraken_reads_to_taxa.txt --use-names\"
 
 	#Logs version of the software and executed command 
 	#MetaPhlAn prints on stderr
-	version=\$(metaphlan2.py --version 2>&1 >/dev/null | grep \"MetaPhlAn\")
+	version=\$(kraken2 --version | grep \"Kraken\")
 	echo \"Using \$version \" >> .log.7
-	echo \"Using BowTie2 database in $params.bowtie2db \" >> .log.7
+	echo \"Using Kraken2 database in $params.kraken2_db \" >> .log.7
 	echo \" \" >> .log.7
 	echo \"Executing command: \$CMD \" >> .log.7
 	
@@ -742,15 +748,11 @@ process profileTaxa {
 	#Estimates microbial abundances
 	exec \$CMD 2>&1 | tee tmp.log
 
-	#Sets the prefix in the biom file
-	sed -i 's/Metaphlan2_Analysis/${params.prefix}/g' ${params.prefix}.biom
-	sed -i 's/Metaphlan2_Analysis/${params.prefix}/g' ${params.prefix}_metaphlan_bugs_list.tsv
-
 	#Logs some info
 	tree=(kingdom phylum class order family genus species)
 	for i in {2..7}
 	do
-		c=\$(sed '1d' ${params.prefix}_metaphlan_bugs_list.tsv | cut -d\"|\" -f \$i | grep -v \"k__\" | cut -f 1  | sort | uniq | sed '/^\\s*\$/d' | wc -l | cut -d\" \" -f 1)
+		c=\$(sed '1d' ${params.prefix}_kraken_taxa_to_read_counts.tsv | cut -d\"|\" -f \$i | grep -v \"k__\" | cut -f 1  | sort | uniq | sed '/^\\s*\$/d' | wc -l | cut -d\" \" -f 1)
 		echo \"\$c \${tree[((\$i-1))]} found\" >> .log.7
 	done
 
@@ -778,6 +780,7 @@ process profileTaxa {
 	multiple measure, is outputted.
 */
 
+toalphadiversity = Channel.from("null")
 process alphaDiversity {
 
 	publishDir  workingdir, mode: 'copy', pattern: "*.{tsv}"
@@ -788,59 +791,61 @@ process alphaDiversity {
 	
     output:
 	file ".log.8" into log8
-	file "${params.prefix}_alpha_diversity.tsv"
+	// file "${params.prefix}_alpha_diversity.tsv"
 	
 	when:
-	params.mode == "characterisation" || params.mode == "complete"
+	params.mode == "characterisation" || params.mode == "complete" && params.alphadiversity
 
 	script:
 	"""
+	set -e
 	#Measures execution time
 	sysdate=\$(date)
 	starttime=\$(date +%s.%N)
-	echo \"Performing Community Characterisation. STEP 2 [Evaluating alpha-diversity] at \$sysdate\" > .log.8
+	# echo \"Performing Community Characterisation. STEP 2 [Evaluating alpha-diversity] at \$sysdate\" > .log.8
 	echo \" \" >> .log.8
 
 	#It checks if the profiling was successful, that is if identifies at least three species
 	n=\$(grep -o s__ $infile | wc -l  | cut -d\" \" -f 1)
-	if (( n > 3 ))
-	then
-		#Defines command -- if the tree path is not specified, not all the alpha 
-		#measures can be evaluated (that is, PD_whole_tree is skipped)
-		if [ $params.treepath == null ]
-		then
-			CMD=\"alpha_diversity.py -i $infile -o ${params.prefix}_alpha_diversity.tsv -m ace,berger_parker_d,brillouin_d,chao1,chao1_ci,dominance,doubles,enspie,equitability,esty_ci,fisher_alpha,gini_index,goods_coverage,heip_e,kempton_taylor_q,margalef,mcintosh_d,mcintosh_e,menhinick,michaelis_menten_fit,observed_otus,observed_species,osd,simpson_reciprocal,robbins,shannon,simpson,simpson_e,singles,strong\"
-		else
-			CMD=\"alpha_diversity.py -i $infile -o ${params.prefix}_alpha_diversity.tsv -m ace,berger_parker_d,brillouin_d,chao1,chao1_ci,dominance,doubles,enspie,equitability,esty_ci,fisher_alpha,gini_index,goods_coverage,heip_e,kempton_taylor_q,margalef,mcintosh_d,mcintosh_e,menhinick,michaelis_menten_fit,observed_otus,observed_species,osd,simpson_reciprocal,robbins,shannon,simpson,simpson_e,singles,strong,PD_whole_tree -t $treepath\"
-		fi
+	# if (( n > 3 ))
+	# then
+	# 	#Defines command -- if the tree path is not specified, not all the alpha 
+	# 	#measures can be evaluated (that is, PD_whole_tree is skipped)
+	# 	if [ $params.treepath == null ]
+	# 	then
+	# 		CMD=\"alpha_diversity.py -i $infile -o ${params.prefix}_alpha_diversity.tsv -m ace,berger_parker_d,brillouin_d,chao1,chao1_ci,dominance,doubles,enspie,equitability,esty_ci,fisher_alpha,gini_index,goods_coverage,heip_e,kempton_taylor_q,margalef,mcintosh_d,mcintosh_e,menhinick,michaelis_menten_fit,observed_otus,observed_species,osd,simpson_reciprocal,robbins,shannon,simpson,simpson_e,singles,strong\"
+	# 	else
+	# 		CMD=\"alpha_diversity.py -i $infile -o ${params.prefix}_alpha_diversity.tsv -m ace,berger_parker_d,brillouin_d,chao1,chao1_ci,dominance,doubles,enspie,equitability,esty_ci,fisher_alpha,gini_index,goods_coverage,heip_e,kempton_taylor_q,margalef,mcintosh_d,mcintosh_e,menhinick,michaelis_menten_fit,observed_otus,observed_species,osd,simpson_reciprocal,robbins,shannon,simpson,simpson_e,singles,strong,PD_whole_tree -t $treepath\"
+	# 	fi
 		
-		#Logs version of the software and executed command
-		version=\$(alpha_diversity.py --version) 
-		echo \"Using \$version \" >> .log.8
-		if [ $params.treepath == null ]
-		then
-			echo \"Newick tree not used, PD_whole_tree skipped\" >> .log.8
-		else
-			echo \"Using Newick tree in $params.treepath\" >> .log.8
-		fi
-		echo \" \" >> .log.8
-		echo \"Executing command: \$CMD \" >> .log.8
-		echo \" \" >> .log.8
+	# 	#Logs version of the software and executed command
+	# 	version=\$(alpha_diversity.py --version) 
+	# 	echo \"Using \$version \" >> .log.8
+	# 	if [ $params.treepath == null ]
+	# 	then
+	# 		echo \"Newick tree not used, PD_whole_tree skipped\" >> .log.8
+	# 	else
+	# 		echo \"Using Newick tree in $params.treepath\" >> .log.8
+	# 	fi
+	# 	echo \" \" >> .log.8
+	# 	echo \"Executing command: \$CMD \" >> .log.8
+	# 	echo \" \" >> .log.8
 		
-		#Evaluates alpha diversities, redirect is done here because QIIME gets it as an extra parameter
-		exec \$CMD 2>&1 | tee tmp.log
-	else
-		#Also if the alpha are not evaluated the file should be created in order to be returned
-		echo \"Not enough classified species detected (N=\$n). Analysis skipped.\" >> .log.8
-		touch ${params.prefix}_alpha_diversity.tsv 
-	fi
+	# 	#Evaluates alpha diversities, redirect is done here because QIIME gets it as an extra parameter
+	# 	exec \$CMD 2>&1 | tee tmp.log
+	# else
+	# 	#Also if the alpha are not evaluated the file should be created in order to be returned
+	# 	echo \"Not enough classified species detected (N=\$n). Analysis skipped.\" >> .log.8
+	# 	touch ${params.prefix}_alpha_diversity.tsv 
+	# fi
+	echo \"Alpha diversity analysis not yet implemented.\" >> .log.8
 	
 	#Measures and log execution time
 	endtime=\$(date +%s.%N)
 	exectime=\$(echo \"\$endtime \$starttime\" | awk '{print \$1-\$2}')
 	sysdate=\$(date)
 	echo \"\" >> .log.8
-	echo \"STEP 2 (Community Characterisation) terminated at \$sysdate (\$exectime seconds)\" >> .log.8
+	# echo \"STEP 2 (Community Characterisation) terminated at \$sysdate (\$exectime seconds)\" >> .log.8
 	echo \" \" >> .log.8
 	echo \"++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\" >> .log.8
 	echo \"\" >> .log.8
@@ -874,7 +879,8 @@ process profileFunction {
 	
 	input:
 	file(cleanreads) from toprofilefunctionreads
-	file(metaphlanbuglist) from toprofilefunctionbugs
+	file(mpa_pkl) from Channel.from( file(params.mpa_pkl) )
+	file(bowtie2db) from Channel.fromPath( params.bowtie2db, type: 'dir' )
 	file(chocophlan) from Channel.fromPath( params.chocophlan, type: 'dir' )
 	file(uniref) from Channel.fromPath( params.uniref, type: 'dir' )
 	
@@ -893,14 +899,18 @@ process profileFunction {
 
 	script:
 	"""
+	set -e
 	#Measures execution time
  	sysdate=\$(date)
  	starttime=\$(date +%s.%N)
  	echo \"Performing Community Characterisation. STEP 3 [Performing functional annotation] with HUMAnN2 at \$sysdate\" > .log.9
  	echo \" \" >> .log.9
 
+	#If a file with the same name is already present, Metaphlan2 will crash
+	rm -rf ${params.prefix}_bt2out.txt
+	
 	#Defines HUMAnN2 command taking advantages of the MetaPhlAn2's results
-	CMD=\"humann2 --input $cleanreads --output . --output-basename ${params.prefix} --taxonomic-profile $metaphlanbuglist --nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads ${task.cpus} --memory-use minimum\"
+	CMD="humann2 --input $cleanreads --output . --output-basename ${params.prefix} --metaphlan-options \\"--tmp_dir=. --bowtie2out=${params.prefix}_bt2out.txt --mpa_pkl $mpa_pkl  --bowtie2db $bowtie2db/$params.bowtie2dbfiles --bt2_ps $params.bt2options --nproc ${task.cpus}\\" --nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads ${task.cpus} --memory-use minimum"
 	
 	#Logs version of the software and executed command
 	#HUMAnN2 prints on stderr
@@ -1021,21 +1031,21 @@ process logCC {
 */
 	
 	
-process saveCCtmpfile {
+// process saveCCtmpfile {
 
-	publishDir  workingdir, mode: 'copy'
+// 	publishDir  workingdir, mode: 'copy'
 		
-	input:
-	file (tmpfile) from topublishprofiletaxa.mix(topublishhumann2).flatMap()
+// 	input:
+// 	file (tmpfile) from topublishprofiletaxa.mix(topublishhumann2).flatMap()
 
-	output:
-	file "$tmpfile"
+// 	output:
+// 	file "$tmpfile"
 
-	when:
-	(params.mode == "characterisation" || params.mode == "complete") && params.keepCCtmpfile
+// 	when:
+// 	(params.mode == "characterisation" || params.mode == "complete") && params.keepCCtmpfile
 		
-	script:
-	"""
-	echo $tmpfile
-	"""
-}
+// 	script:
+// 	"""
+// 	echo $tmpfile
+// 	"""
+// }
