@@ -373,7 +373,8 @@ if (params.singleEnd) {
 	.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants }
 } else {
 	Channel
-	.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
+	.fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz")
+	//.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
 	.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants }
 }
 
