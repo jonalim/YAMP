@@ -17,11 +17,10 @@ if (( warning != 0 )); then
 fi
 
 #Logs some info regarding the taxomic tree
-echo "        <dt>"Detected"</dt><dd></dd>" 
-tree=(Kingdom Phylum Class Order Family Genus Species)
+tree=(Kingdoms Phyla Classes Orders Families Genera Species)
 for i in {1..7}
 do
-	c=$(sed '1d' $1 | cut -d"|" -f $i | grep -v "k__" | cut -f 1  | sort | uniq | sed '/^\\s*\$/d' | wc -l | cut -d" " -f 1)
+	c=$(sed '1d' $1 | cut -d"|" -f $i -s | grep "__" | cut -f 1  | sort | uniq | sed '/^\\s*\$/d' | wc -l | cut -d" " -f 1)
 	echo  "        <dt>"${tree[(($i-1))]}"</dt><dd>"$c"</dd>" 
 done
 

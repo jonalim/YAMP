@@ -13,7 +13,7 @@ echo "    <dl class="dl-horizontal">"
 # Dump some figures about sequences passing trimming
 while IFS= read -r line
 do
-	echo $line | sed 's/  */ /g' | awk -F: '{print "        <dt>"$1":</dt><dd>"$2"</dd>" }'
+	echo $line | sed 's/  */ /g' | awk -F: '{print "        <dt>"$1":</dt><dd>"$2"</dd>" }' | sed 's/%/% of input/g'
 done < <(sed -n '/Input:/,/Result:/p' synthetic_contaminants_mqc.txt) 
 
 # Log some figures about sequences passing deletion of contaminants
@@ -25,7 +25,7 @@ percentage=`printf "%.2f" $percentage`
 time=$(grep "Time:" synthetic_contaminants_mqc.txt | cut -d: -f 2 | cut -f 2 | sed 's/s\./s/g')
 
 # Logs some more (to standardize with other outputs)
-echo "        <dt>Surviving:</dt><dd>"$survivedR" ("$percentage"%)</dd>" 
+echo "        <dt>Surviving:</dt><dd>"$survivedR" ("$percentage"% of input)</dd>" 
 echo "        <dt>Total time:</dt><dd>"$time"</dd>" 
 echo "    </dl>" 
 

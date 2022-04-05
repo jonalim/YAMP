@@ -18,18 +18,18 @@ module_order:
         anchor: 'fastqc_raw'
         info: 'This section of the report shows FastQC results on the raw reads.'
         path_filters_exclude:
-            - './fastqc/*QCd_fastqc.zip'
+            - './fastqc_QCd/*_fastqc.zip'
     - fastqc:
         name: 'FastQC (QCd reads)'
         anchor: 'fastqc_qcd'
         info: 'This section of the report shows FastQC results after the QC.'
         path_filters:
-            - './fastqc/*QCd_fastqc.zip'
+            - './fastqc_QCd/*_fastqc.zip'
 
-table_columns_visible:
-    FastQC: True
 
-skip_generalstats: true
+sample_names_replace_regex: true
+sample_names_replace_exact: true
+skip_generalstats: false
 
 # Report order
 report_section_order:
@@ -59,3 +59,104 @@ report_section_order:
       order: -1
     workflow-summary:
       order: -2
+
+custom_data:
+  Clumpify:
+    plot_type: "generalstats"
+    pconfig:
+      - raw:
+          title: "Raw"
+          description: "Total reads prior to QC"
+          min: 0
+          scale: "Blues"
+          format: "{:,.0f}"
+          placement: 899
+      - deduped:
+          title: "Deduplicated"
+          description: "Total deduplicated reads"
+          min: 0
+          scale: "Blues"
+          format: "{:,.0f}"
+          placement: 900
+  BBDuk:
+    plot_type: "generalstats"
+    pconfig:
+      - synDecontam:
+          title: "Decontaminated"
+          description: "Total reads surviving removal of synthetic contaminants"
+          min: 0
+          scale: "Blues"
+          format: "{:,.0f}"
+          placement: 901
+      - trimmed:
+          title: "Trimmed"
+          description: "Total reads surviving post-trimming length filter"
+          min: 0
+          scale: "Blues"
+          format: "{:,.0f}"
+          placement: 902
+  BBMap:
+    plot_type: "generalstats"
+    pconfig:
+      - decontam:
+          title: "Host Removed"
+          description: "Total reads surviving removal of host reads. This is the last QC step."
+          min: 0
+          scale: "Blues"
+          format: "{:,.0f}"
+          placement: 903
+  Metaphlan:
+    plot_type: "generalstats"
+    pconfig:
+      - nSpecies:
+          title: "Species"
+          description: "Total species identified"
+          min: 0
+          scale: "Blues"
+          format: "{:,.0f}"
+          placement: 1101
+  Humann:
+    plot_type: "generalstats"
+    pconfig:
+      - percExplained:
+          title: "% Explained"
+          description: "Percent of QCd microbiome explained by identified species"
+          min: 0
+          max: 100
+          scale: "Greens"
+          suffix: "%"
+          placement: 1102
+      - geneFamilies:
+          title: "G.Fam"
+          description: "Total gene families (found by translated alignment)"
+          min: 0
+          scale: "Blues"
+          format: "{:,.0f}"
+          placement: 1103
+sp:
+  Clumpify:
+    fn: "dedup_data.txt"
+  BBDuk:
+    fn: "bbduk_data.txt"
+  BBMap:
+    fn: "decontam_data.txt"
+  Metaphlan:
+    fn: "profile_taxa_data.txt"
+  Humann:
+    fn: "profile_functions_data.txt"
+
+table_columns_placement:
+  FastQC (Raw reads):
+    percent_duplicates: 1
+    percent_gc: 2
+    avg_sequence_length: 3
+    percent_fails: 4
+    total_sequences: 5
+
+table_columns_visible:
+    'FastQC (Raw reads)': 
+      avg_sequence_length: True
+      total_sequences: True
+    'FastQC (QCd reads)': 
+      avg_sequence_length: True
+      total_sequences: True

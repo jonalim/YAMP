@@ -13,7 +13,7 @@ echo "    <dl class="dl-horizontal">"
 # Dump some figures about sequences passing trimming 
 while IFS= read -r line
 do
-	echo $line | sed 's/  */ /g' | awk -F: '{print "        <dt>"$1":</dt><dd>"$2"</dd>" }' 
+	echo $line | sed 's/  */ /g' | awk -F: '{print "        <dt>"$1":</dt><dd>"$2"</dd>" }' | sed 's/%/% of input/g'
 done < <(sed -n '/Input:/,/Result:/p'  trimming_mqc.txt) 
 
 # Logs some more (to standardize with other outputs)
@@ -32,8 +32,7 @@ if ls *_trimmed_singletons.fq.gz 1> /dev/null 2>&1; then
 	echo "        <dt>Unpaired reads:</dt><dd>"$unpairedR"</dd>" 
 fi
 
-echo "        <dt>Survived de-duplication:</dt><dd>"$survivedR"</dd>" 
-echo "        <dt>Survived (percentage)</dt><dd>"$percentage"</dd>" 
+echo "        <dt>Surviving:</dt><dd>"$survivedR" ("$percentage"% of input)</dd>" 
 echo "        <dt>Total time:</dt><dd>"$time"</dd>" 
 echo "    </dl>" 
 

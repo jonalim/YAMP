@@ -55,6 +55,7 @@ https://github.com/alesssia/YAMP/wiki for more details.
   Main options:
     --mode       <QC|characterisation|complete>
     --singleEnd  <true|false>   whether the layout is single-end
+	--qc_matepairs  <true|false> whether to wait until after QC to combine mate pairs
     --dedup      <true|false>   whether to perform de-duplication
   
   Profiles:
@@ -232,13 +233,16 @@ if(workflow.profile == 'awsbatch'){
 
 //General
 summary['Running parameters'] = ""
-summary['Reads'] = "[" + params.reads1 + ", " + params.reads2 + "]"
 summary['Prefix'] = params.prefix
 summary['Running mode'] = params.mode
 summary['Layout'] = params.singleEnd ? 'Single-End' : 'Paired-End'
 
 if (params.mode != "characterisation") 
 {
+	if (!params.singleEnd) 
+	{
+		summary['QC mate pairs separately'] = params.qc_matepairs
+	}
 	summary['Performing de-duplication'] = params.dedup
 
 	//remove_synthetic_contaminants 
@@ -283,11 +287,12 @@ if (params.mode != "QC")
 
 //Folders
 summary['Folders'] = ""
+summary['Input directory'] = params.reads
 summary['Output dir'] = workingpath
 summary['Working dir'] = workflow.workDir
 summary['Output dir'] = params.outdir
 summary['Script dir'] = workflow.projectDir
-summary['Lunching dir'] = workflow.launchDir
+summary['Launching dir'] = workflow.launchDir
 
 log.info summary.collect { k,v -> "${k.padRight(27)}: $v" }.join("\n")
 log.info ""
@@ -334,7 +339,7 @@ process get_software_versions {
     }
 
 	output:
-	file "software_versions_mqc.yaml" into software_versions_yaml
+	file("software_versions_mqc.yaml") into software_versions_yaml
 
 	script:
 	//I am using a multi-containers scenarios, supporting docker and singularity
@@ -359,6 +364,8 @@ process get_software_versions {
 	"""
 }
 
+// software_versions_yaml = software_versions_yaml.first()
+
 /**
 	Creates a set of channels for input read files.
 	- read_files_fastqc is used for the first QC assessment (on the raw reads)
@@ -372,10 +379,32 @@ if (params.singleEnd) {
 	.from([[params.prefix, [file(params.reads1)]]])
 	.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants }
 } else {
-	Channel
-	.fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz")
-	//.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
-	.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants }
+	if(params.qc_matepairs) {
+		Channel
+		.fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz", checkIfExists: true)
+		//.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
+		.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants; read_files_log }
+	} else {
+		Channel.fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz", checkIfExists: true)
+		.set {to_combine_reads}
+	}
+}
+
+process merge_paired_end_raw {
+	tag "$name"
+
+	input:
+	tuple val(name), file(reads) from to_combine_reads
+
+	output:
+	tuple val(name), path("*.fq.gz") into read_files_fastqc, read_files_dedup, read_files_synthetic_contaminants, read_files_log
+
+	script:
+	"""
+	gunzip --force < "${reads[0]}" >> "${name}.fq"
+	gunzip --force < "${reads[1]}" >> "${name}.fq"
+	gzip --force < "${name}.fq" > "${name}.fq.gz"
+	"""
 }
 
 // ------------------------------------------------------------------------------   
@@ -406,15 +435,15 @@ process dedup {
 
 	output:
 	tuple val(name), path("${name}_dedup*.fq.gz") into to_synthetic_contaminants
-	file "dedup_mqc.yaml" into dedup_log
+	file "*.yaml" into dedup_log
 	
 	when:
 	params.mode != "characterisation" && params.dedup
 
 	script:
 	// This is to deal with single and paired end reads
-	def input = params.singleEnd ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\" in2=\"${reads[1]}\""
-	def output = params.singleEnd ? "out=\"${name}_dedup.fq.gz\"" :  "out1=\"${name}_dedup_R1.fq.gz\" out2=\"${name}_dedup_R2.fq.gz\""
+	def input = (params.singleEnd || ! params.qc_matepairs) ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\" in2=\"${reads[1]}\""
+	def output = (params.singleEnd || ! params.qc_matepairs) ? "out=\"${name}_dedup.fq.gz\"" :  "out1=\"${name}_dedup_R1.fq.gz\" out2=\"${name}_dedup_R2.fq.gz\""
 	
 	"""
 	#Sets the maximum memory to 4/5 of the value requested in the config file
@@ -425,7 +454,7 @@ process dedup {
 	
 	# MultiQC doesn't have a module for clumpify yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_dedup_log.sh > dedup_mqc.yaml
+	bash scrape_dedup_log.sh > ${name}.yaml
 	"""
 }
 
@@ -442,8 +471,8 @@ if (!params.dedup & params.mode != "characterisation") {
 }
 
 // Defines channels for resources file 
-Channel.fromPath( "${params.artefacts}", checkIfExists: true ).set { artefacts }
-Channel.fromPath( "${params.phix174ill}", checkIfExists: true ).set { phix174ill }
+artefacts = file(params.artefacts, type: "file", checkIfExists: true )
+phix174ill = file(params.phix174ill, type: "file", checkIfExists: true)
 
 process remove_synthetic_contaminants {
 	
@@ -457,11 +486,13 @@ process remove_synthetic_contaminants {
     }
 
 	input:
-	tuple file(artefacts), file(phix174ill), val(name), file(reads) from artefacts.combine(phix174ill).combine(to_synthetic_contaminants)
+	tuple val(name), file(reads) from to_synthetic_contaminants
+	file(artefacts) from artefacts
+	file(phix174ill) from phix174ill
    
 	output:
 	tuple val(name), path("${name}_no_synthetic_contaminants*.fq.gz") into to_trim
-	file "synthetic_contaminants_mqc.yaml" into synthetic_contaminants_log
+	file "*.yaml" into synthetic_contaminants_log
 	
 	when:
 	params.mode != "characterisation"
@@ -477,7 +508,7 @@ process remove_synthetic_contaminants {
 	
 	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_remove_synthetic_contaminants_log.sh > synthetic_contaminants_mqc.yaml
+	bash scrape_remove_synthetic_contaminants_log.sh > ${name}.yaml
 	"""
 }
 
@@ -491,7 +522,7 @@ process remove_synthetic_contaminants {
 */
 
 // Defines channels for resources file 
-Channel.fromPath( "${params.adapters}", checkIfExists: true ).set { adapters }
+adapters = file(params.adapters, type: "file", checkIfExists: true)
 
 process trim {
 
@@ -505,11 +536,11 @@ process trim {
     }
 	
 	input:
-	tuple file(adapters), val(name), file(reads) from adapters.combine(to_trim) 
-	
+	tuple val(name), file(reads) from to_trim
+	file(adapters) from adapters
 	output:
 	tuple val(name), path("${name}_trimmed*.fq.gz") into to_decontaminate
-	file "trimming_mqc.yaml" into trimming_log
+	file "*.yaml" into trimming_log
 	
 	when:
 	params.mode != "characterisation"
@@ -526,7 +557,7 @@ process trim {
 
 	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_trimming_log.sh > trimming_mqc.yaml
+	bash scrape_trimming_log.sh > ${name}.yaml
 	"""
 }
 
@@ -540,7 +571,7 @@ process trim {
 */
 
 // Defines channels for foreign_genome file 
-Channel.fromPath( "${params.foreign_genome}", checkIfExists: true ).set { foreign_genome }
+foreign_genome = file( "${params.foreign_genome}", type: "file", checkIfExists: true )
 
 //Stage boilerplate log when the contaminant (pan)genome is indexed
 if (params.mode != "characterisation" && params.foreign_genome_ref == "") {
@@ -578,11 +609,9 @@ process index_foreign_genome {
 	"""
 }
 
-//Channel.fromPath( "${params.foreign_genome_ref}", checkIfExists: true ).set { ref_foreign_genome }
-
 //When the indexed contaminant (pan)genome is already available, its path should be pushed in the correct channel
 if (params.foreign_genome_ref != "") {
-	ref_foreign_genome = Channel.from(file(params.foreign_genome_ref))
+	ref_foreign_genome = file(params.foreign_genome_ref, checkIfExists: true )
 }
 
 process decontaminate {
@@ -596,16 +625,16 @@ process decontaminate {
         container params.docker_container_bbmap
     }
 
-	publishDir "${params.outdir}/${params.prefix}", mode: 'copy', pattern: "*QCd.fq.gz"
+	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*QCd.fq.gz"
 
 	input:
-	tuple path(ref_foreign_genome), val(name), file(reads) from ref_foreign_genome.combine(to_decontaminate)
+	tuple val(name), file(reads) from to_decontaminate
+	path(ref_foreign_genome) from ref_foreign_genome
 
 	output:
-	tuple val(name), path("*_QCd.fq.gz") into qcd_reads
-	tuple val(name), path("*_QCd.fq.gz") into to_profile_taxa_decontaminated
-	tuple val(name), path("*_QCd.fq.gz") into to_profile_functions_decontaminated
-	file "decontamination_mqc.yaml" into decontaminate_log
+	tuple val(name), path("decontam/*.fq.gz") into qcd_reads
+	tuple val(name), path("decontam/*.fq.gz") into to_profile_taxa_decontaminated
+	file "*.yaml" into decontaminate_log
 
 	when:
 	params.mode != "characterisation"
@@ -615,17 +644,20 @@ process decontaminate {
 	// and on singleton reads thanks to BBwrap, that calls BBmap once on the paired reads
 	// and once on the singleton ones, merging the results on a single output file
 	def input = params.singleEnd ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\",\"${reads[2]}\" in2=\"${reads[1]}\",null"
-	def output = "outu=\"${name}_QCd.fq.gz\" outm=\"${name}_contamination.fq.gz\""
+	def outputu = "\"decontam/${name}.fq.gz\""
+	def outputm = "\"${name}_contamination.fq.gz\""
 	"""
+	mkdir decontam
+
 	#Sets the maximum memory to the value requested in the config file
 	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
 	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
 
-	bbwrap.sh -Xmx\"\$maxmem\"  mapper=bbmap append=t $input $output minid=$params.mind maxindel=$params.maxindel bwr=$params.bwr bw=12 minhits=2 qtrim=rl trimq=$params.phred path="./" qin=$params.qin threads=${task.cpus} untrim quickmatch fast ow &> decontamination_mqc.txt
+	bbwrap.sh -Xmx\"\$maxmem\"  mapper=bbmap append=t $input outu=$outputu outm=$outputm minid=$params.mind maxindel=$params.maxindel bwr=$params.bwr bw=12 minhits=2 qtrim=rl trimq=$params.phred path="./" qin=$params.qin threads=${task.cpus} untrim quickmatch fast ow &> decontamination_mqc.txt
 
 	# MultiQC doesn't have a module for bbwrap yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_decontamination_log.sh > decontamination_mqc.yaml
+	bash scrape_decontamination_log.sh $outputu $outputm > ${name}.yaml
 	"""
 }
 
@@ -646,13 +678,14 @@ process quality_assessment {
         container params.docker_container_fastqc
     }
 	
-	publishDir "${params.outdir}/${params.prefix}/fastqc", mode: 'copy' //,
+	publishDir "${params.outdir}/${name}/fastqc", mode: 'copy' //,
 
     input:
-    set val(name), file(reads) from read_files_fastqc.mix(qcd_reads)
-
+    tuple val(name), file(reads: 'raw/*'), file(qcd_reads: 'qcd/*') from read_files_fastqc.join(qcd_reads, failOnDuplicate: true, failOnMismatch: true)
+	
     output:
-    path "*_fastqc.{zip,html}" into fastqc_log
+    path "raw/*_fastqc.{zip,html}" into fastqc_sample_log, fastqc_raw_project_log
+	path "qcd/*_fastqc.{zip,html}" into fastqc_qcd_project_log
 	
 	when:
 	params.mode != "characterisation"
@@ -660,7 +693,14 @@ process quality_assessment {
     script:
     """
     fastqc -q $reads
+	fastqc -q $qcd_reads
     """
+		// for f in {raw,qcd}/*; do
+	// 	base=\${f##*/}   #=> "foo.cpp" (basepath)
+	// 	dir=\${f%\${base}}
+	// 	ext=\${f##*.}
+	// 	mv "\${f}" "\${dir}/${name}_fastqc.\${ext}"
+	// done
 }
 
 // ------------------------------------------------------------------------------   
@@ -676,11 +716,12 @@ process quality_assessment {
 if (params.mode == "characterisation" && params.singleEnd) {
 	Channel
 	.from([[params.prefix, [file(params.reads1)]]])
-	.into { reads_profile_taxa; reads_profile_functions }
+	.into { reads_profile_taxa }
 	
 	//Initialise empty channels
 	reads_merge_paired_end_cleaned = Channel.empty()
-	merge_paired_end_cleaned_log = Channel.empty()
+	//Init as value channel so it can be reused by log process
+	merge_paired_end_cleaned_log = Channel.value([])
 } else if (params.mode == "characterisation" && !params.singleEnd) {
 	Channel
 	.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
@@ -691,15 +732,13 @@ if (params.mode == "characterisation" && params.singleEnd) {
 	
 	//Initialise empty channels
 	reads_profile_taxa = Channel.empty()
-	reads_profile_functions = Channel.empty()
 } else if (params.mode != "characterisation")
 {
 	//Initialise empty channels
 	reads_merge_paired_end_cleaned = Channel.empty()
-	merge_paired_end_cleaned_log = Channel.empty()
 	reads_profile_taxa = Channel.empty()
-	reads_profile_functions = Channel.empty()
-	reads_profile_taxa = Channel.empty()
+	//Init as value channel so it can be reused by log process
+	merge_paired_end_cleaned_log = Channel.value([])
 }
 
 process merge_paired_end_cleaned {
@@ -710,8 +749,7 @@ process merge_paired_end_cleaned {
 	tuple val(name), file(reads) from reads_merge_paired_end_cleaned
 	
 	output:
-	tuple val(name), path("*_QCd.fq.gz") into to_profile_taxa_merged
-	tuple val(name), path("*_QCd.fq.gz") into to_profile_functions_merged
+	tuple val(name), path("*.fq.gz") into to_profile_taxa_merged
 	
 	when:
 	params.mode == "characterisation" && !params.singleEnd
@@ -722,9 +760,9 @@ process merge_paired_end_cleaned {
 	# I will simply use a boilerplate YAML to record that this has happened
 	# If the files were not compressed, they will be at this stage
 	if (file ${reads[0]} | grep -q compressed ) ; then
-	    cat ${reads[0]} ${reads[1]} > ${name}_QCd.fq.gz
+	    cat ${reads[0]} ${reads[1]} > ${name}.fq.gz
 	else
-		cat ${reads[0]} ${reads[1]} | gzip > ${name}_QCd.fq.gz
+		cat ${reads[0]} ${reads[1]} | gzip > ${name}.fq.gz
 	fi
 	"""
 }
@@ -736,7 +774,10 @@ process merge_paired_end_cleaned {
 
 
 // Defines channels for bowtie2_metaphlan_databases file 
-Channel.fromPath( params.metaphlan_databases, type: 'dir', checkIfExists: true ).set { bowtie2_metaphlan_databases }
+// log.info params.metaphlan_databases
+// exit 1, params.metaphlan_databases
+// bowtie2_metaphlan_databases = Channel.value( params.metaphlan_databases )
+bowtie2_metaphlan_databases = file( params.metaphlan_databases, type: 'dir', checkIfExists: true )
 
 process profile_taxa {
 
@@ -749,16 +790,18 @@ process profile_taxa {
         container params.docker_container_biobakery
     }
 
-	publishDir "${params.outdir}/${params.prefix}", mode: 'copy', pattern: "*.{biom,tsv}"
+	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*.{biom,tsv}"
 	
 	input:
 	tuple val(name), file(reads) from to_profile_taxa_decontaminated.mix(to_profile_taxa_merged).mix(reads_profile_taxa)
-	file (bowtie2db) from bowtie2_metaphlan_databases
-	
+	file(bowtie2db) from bowtie2_metaphlan_databases
+
 	output:
 	tuple val(name), path("*.biom") into to_alpha_diversity
-	tuple val(name), path("*_metaphlan_bugs_list.tsv") into to_profile_function_bugs
-	file "profile_taxa_mqc.yaml" into profile_taxa_log
+	file("*_metaphlan_bugs_list.tsv") into to_collect_taxonomic_profiles
+	tuple val(name), path(reads), path("*_metaphlan_bugs_list.tsv") into to_profile_function
+	tuple val(name), path("${name}.yaml") into profile_taxa_sample_log
+	path "${name}.yaml" into profile_taxa_project_log
 	
 	when:
 	params.mode != "QC"
@@ -767,23 +810,92 @@ process profile_taxa {
 	"""
 	#If a file with the same name is already present, Metaphlan2 used to crash, leaving this here just in case
 	rm -rf ${name}_bt2out.txt
-	
+
 	metaphlan --input_type fastq --tmp_dir=. --biom ${name}.biom --bowtie2out=${name}_bt2out.txt --bowtie2db $bowtie2db --bt2_ps ${params.bt2options} --add_viruses --sample_id ${name} --nproc ${task.cpus} $reads ${name}_metaphlan_bugs_list.tsv &> profile_taxa_mqc.txt
 	
 	# MultiQC doesn't have a module for Metaphlan yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_profile_taxa_log.sh ${name}_metaphlan_bugs_list.tsv > profile_taxa_mqc.yaml
+	bash scrape_profile_taxa_log.sh ${name}_metaphlan_bugs_list.tsv > ${name}.yaml
 	"""
 }
 
+process collect_taxonomic_profiles {
+	publishDir "${params.outdir}", mode: 'copy', pattern: "merged_metaphlan_abundance_table.txt"
+
+	input:
+	file '*' from to_collect_taxonomic_profiles.collect()
+
+	output:
+	file 'merged_metaphlan_abundance_table.txt' into to_hclust
+
+	when:
+	params.mode != "QC"
+
+	script:
+	"""
+	# merge_metaphlan_tables.py will put the whole filename (without .tsv) as column names
+	for i in *_metaphlan_bugs_list.tsv; do
+		mv \$i \${i/_metaphlan_bugs_list/} 
+	done
+
+	merge_metaphlan_tables.py *.tsv > merged_metaphlan_abundance_table.txt
+	"""
+}
+
+process hclust_taxonomic_profiles {
+	publishDir "${params.outdir}", mode: 'copy'
+
+	input:
+	file 'table' from to_hclust
+
+	output:
+	path '*.png'
+
+	when:
+	params.mode != "QC"
+
+	script:
+	"""
+	awk '{\$2=""; print \$0}' ${table} > table.txt
+
+	hclust2.py \
+		-i table.txt \
+		-o metaphlan.hclust2.sqrt_scale.png \
+		--sep '\\s+' \
+		--skip_rows 0 \
+		--ftop 50 \
+		--f_dist_f correlation \
+		--s_dist_f braycurtis \
+		--cell_aspect_ratio 9 \
+		-s --fperc 99 \
+		--flabel_size 4 \
+		--legend_file metaphlan.hclust2.sqrt_scale.legend.png \
+		--max_flabel_len 100 \
+		--metadata_height 0.075 \
+		--minv 0.01 \
+		--no_slabels \
+		--dpi 300 \
+		--slinkage complete \
+		--no_fclustering # don't know why, but fclustering doesn't work. Might be bc only 2 samples?
+	"""
+}
 
 /**
 	Community Characterisation - STEP 2. Performs the functional annotation using HUMAnN.
 */
 
 // Defines channels for bowtie2_metaphlan_databases file 
-Channel.fromPath( params.chocophlan, type: 'dir', checkIfExists: true ).set { chocophlan_databases }
-Channel.fromPath( params.uniref, type: 'dir', checkIfExists: true ).set { uniref_databases }
+chocophlan_databases = file( params.chocophlan, type: 'dir', checkIfExists: true )
+uniref_databases = file( params.uniref, type: 'dir', checkIfExists: true )
+
+Channel
+    .fromPath('reads/*')
+    .map { file ->
+        def key = file.name.toString().tokenize('_').get(0)
+        return tuple(key, file)
+     }
+    .groupTuple()
+    .set{ groups_ch }
 
 process profile_function {
 	
@@ -796,20 +908,20 @@ process profile_function {
         container params.docker_container_biobakery
     }
 
-	publishDir "${params.outdir}/${params.prefix}", mode: 'copy', pattern: "*.{tsv,log}"
+	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*.{tsv,log}"
 	
 	input:
-	tuple val(name), file(reads) from to_profile_functions_decontaminated.mix(to_profile_functions_merged).mix(reads_profile_functions)
-	tuple val(name), file(metaphlan_bug_list) from to_profile_function_bugs
-	file (chocophlan) from chocophlan_databases
-	file (uniref) from uniref_databases
-	
+	// FIXME the metaphlan bug list is A but the reads are B!!!
+	tuple val(name), file(reads), file(metaphlan_bug_list) from to_profile_function
+	file(chocophlan) from chocophlan_databases
+	file(uniref) from uniref_databases
+
     output:
 	file "*_HUMAnN.log"
-	file "*_genefamilies.tsv"
-	file "*_pathcoverage.tsv"
-	file "*_pathabundance.tsv"
-	file "profile_functions_mqc.yaml" into profile_functions_log
+	file "*_genefamilies.tsv" into humann_gene_families
+	file "*_pathcoverage.tsv" into humann_path_coverage
+	file "*_pathabundance.tsv" into humann_path_abundance
+	file "*.yaml" into profile_functions_log, profile_functions_project_log
 
 	when:
 	params.mode != "QC"
@@ -817,16 +929,48 @@ process profile_function {
 	script:
 	"""
 	#HUMAnN will uses the list of species detected by the profile_taxa process
-	which humann
-	which humann >"which_humann"
+
 	humann --input $reads --output . --output-basename ${name} --taxonomic-profile $metaphlan_bug_list --nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads ${task.cpus} --memory-use minimum &> ${name}_HUMAnN.log 
 	
 	# MultiQC doesn't have a module for humann yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_profile_functions.sh ${name} ${name}_HUMAnN.log > profile_functions_mqc.yaml
+	bash scrape_profile_functions.sh ${name} ${name}_HUMAnN.log ${reads} > ${name}.yaml
  	"""
 }
 
+process collect_functional_profiles {
+	publishDir "${params.outdir}", mode: 'copy'
+	// "{all_genefamilies.tsv,all_pathcoverage.tsv,all_pathabundance.tsv,all_genefamilies-cpm.tsv,all_pathcoverage-cpm.tsv,all_pathabundance-cpm.tsv}"
+
+	//Enable multicontainer settings
+    if (workflow.containerEngine == 'singularity') {
+        container params.singularity_container_biobakery
+    } else {
+        container params.docker_container_biobakery
+    }
+	
+	input:
+	file('*') from humann_gene_families.collect()
+	file('*') from humann_path_coverage.collect()
+	file('*') from humann_path_abundance.collect()
+	
+	output:
+	path('*.tsv') into collected_functional_profiles
+
+	when:
+	params.mode != "QC"
+
+	script:
+	"""
+	humann_join_tables -i ./ -o all_genefamilies.tsv --file_name genefamilies
+	humann_join_tables -i ./ -o all_pathcoverage.tsv --file_name pathcoverage
+	humann_join_tables -i ./ -o all_pathabundance.tsv --file_name pathabundance
+
+	humann_renorm_table -i all_genefamilies.tsv -o all_genefamilies-cpm.tsv --units cpm
+	humann_renorm_table -i all_pathcoverage.tsv -o all_pathcoverage-cpm.tsv --units cpm
+	humann_renorm_table -i all_pathabundance.tsv -o all_pathabundance-cpm.tsv --units cpm
+	"""
+}
 
 /**
 	Community Characterisation - STEP 3. Evaluates several alpha-diversity measures. 
@@ -844,14 +988,14 @@ process alpha_diversity {
         container params.docker_container_qiime2
     }
 
-	publishDir "${params.outdir}/${params.prefix}", mode: 'copy', pattern: "*.{tsv}"
+	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*.{tsv}"
 	
 	input:
 	tuple val(name), file(metaphlan_bug_list) from to_alpha_diversity
 		
     output:
-	file "*_alpha_diversity.tsv"
-	file "alpha_diversity_mqc.yaml" into alpha_diversity_log
+	file "${name}.tsv" into alpha_diversity_project_log
+	file "${name}.yaml" into alpha_diversity_sample_log
 	
 	when:
 	params.mode != "QC"
@@ -862,9 +1006,9 @@ process alpha_diversity {
 	n=\$(grep -o s__ $metaphlan_bug_list | wc -l  | cut -d\" \" -f 1)
 	if (( n <= 3 )); then
 		#The file should be created in order to be returned
-		touch ${name}_alpha_diversity.tsv 
+		touch ${name}.tsv 
 	else
-		echo $name > ${name}_alpha_diversity.tsv
+		echo $name > ${name}.tsv
 		qiime tools import --input-path $metaphlan_bug_list --type 'FeatureTable[Frequency]' --input-format BIOMV100Format --output-path ${name}_abundance_table.qza
 		for alpha in ace berger_parker_d brillouin_d chao1 chao1_ci dominance doubles enspie esty_ci fisher_alpha gini_index goods_coverage heip_e kempton_taylor_q lladser_pe margalef mcintosh_d mcintosh_e menhinick michaelis_menten_fit osd pielou_e robbins shannon simpson simpson_e singles strong
 		do
@@ -872,12 +1016,12 @@ process alpha_diversity {
 			qiime tools export --input-path \$alpha/alpha_diversity.qza --output-path \${alpha} &> /dev/null
 			value=\$(sed -n '2p' \${alpha}/alpha-diversity.tsv | cut -f 2)
 		    echo -e  \$alpha'\t'\$value 
-		done >> ${name}_alpha_diversity.tsv  
+		done >> ${name}.tsv  
 	fi
 
 	# MultiQC doesn't have a module for qiime yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash generate_alpha_diversity_log.sh \${n} > alpha_diversity_mqc.yaml	
+	bash generate_alpha_diversity_log.sh \${n} > ${name}.yaml	
 	"""
 }
 
@@ -894,11 +1038,55 @@ process alpha_diversity {
 */
 
 // Stage config files
-multiqc_config = file(params.multiqc_config)
+// read_files_log.view{ x -> "read_files_log contains: $x" }
+// fastqc_log.view{ x -> "fastqc_log contains: $x" }
+// dedup_log.view{ x -> "dedup_log contains: $x" }
+// synthetic_contaminants_log.view{ x -> "synthetic_contaminants_log contains: $x" }
+// trimming_log.view{ x -> "trimming_log contains: $x" }
 
-process log {
+// process log {
 	
-	publishDir "${params.outdir}/${params.prefix}", mode: 'copy'
+// 	publishDir "${params.outdir}/${name}", mode: 'copy'
+
+//     if (workflow.containerEngine == 'singularity') {
+//         container params.singularity_container_multiqc
+//     } else {
+//         container params.docker_container_multiqc
+//     }
+
+// 	input:
+// 	file multiqc_config from file(params.multiqc_config, type: 'file', checkIfExists: true )
+// 	path "yamp.css" from file(params.multiqc_css, type: 'file', checkIfExists: true )
+// 	tuple val(name), file(reads) from read_files_log
+// 	file workflow_summary from create_workflow_summary(summary)
+// 	file "software_versions_mqc.yaml" from software_versions_yaml.collect()
+// 	path "fastqc/*" from fastqc_sample_log
+// 	file "dedup_mqc.yaml" from dedup_log
+// 	file "synthetic_contaminants_mqc.yaml" from synthetic_contaminants_log
+// 	file "trimming_mqc.yaml" from trimming_log
+// 	file "foreign_genome_indexing_mqc.yaml" from index_foreign_genome_log.collect()
+// 	file "decontamination_mqc.yaml" from decontaminate_log
+// 	file profile_taxa_mqc from profile_taxa_sample_log
+// 	file "merge_paired_end_cleaned_mqc.yaml" from merge_paired_end_cleaned_log
+// 	file "profile_functions_mqc.yaml" from profile_functions_log
+// 	file "alpha_diversity_mqc.yaml" from alpha_diversity_sample_log
+
+// 	output:
+// 	path "*multiqc_report*.html" into multiqc_report
+// 	path "*multiqc_data*"
+
+// 	script:
+// 	"""
+// 	multiqc --config $multiqc_config . -f --custom-css-file yamp.css
+// 	mv multiqc_report.html ${name}_multiqc_report_${params.mode}.html
+// 	mv multiqc_data ${name}_multiqc_data_${params.mode}
+// 	"""
+// }
+
+
+process project_log {
+	
+	publishDir "${params.outdir}", mode: 'copy'
 
     if (workflow.containerEngine == 'singularity') {
         container params.singularity_container_multiqc
@@ -907,30 +1095,95 @@ process log {
     }
 
 	input:
-	file multiqc_config
+	file multiqc_config from file(params.multiqc_config, type: 'file', checkIfExists: true )
+	path "yamp.css" from file(params.multiqc_css, type: 'file', checkIfExists: true )
+	path "replace_sample_names.txt" from file(params.multiqc_replace_names, type: 'file', checkIfExists: true )
 	file workflow_summary from create_workflow_summary(summary)
-	file "software_versions_mqc.yaml" from software_versions_yaml
-	path "fastqc/*" from fastqc_log.collect().ifEmpty([])
-	file "dedup_mqc.yaml" from dedup_log.ifEmpty([])
-	file "synthetic_contaminants_mqc.yaml" from synthetic_contaminants_log.ifEmpty([])
-	file "trimming_mqc.yaml" from trimming_log.ifEmpty([])
-	file "foreign_genome_indexing_mqc.yaml" from index_foreign_genome_log.ifEmpty([])
-	file "decontamination_mqc.yaml" from decontaminate_log.ifEmpty([])
-	file "merge_paired_end_cleaned_mqc.yaml" from merge_paired_end_cleaned_log.ifEmpty([])
-	file "profile_taxa_mqc.yaml" from profile_taxa_log.ifEmpty([])
-	file "profile_functions_mqc.yaml" from profile_functions_log.ifEmpty([])
-	file "alpha_diversity_mqc.yaml" from alpha_diversity_log.ifEmpty([])
-	
+	file "software_versions_mqc.yaml" from software_versions_yaml.collect()
+	path "fastqc_raw/*" from fastqc_raw_project_log.collect()
+	file "dedup/*" from dedup_log.collect()
+	file "syncontam/*" from synthetic_contaminants_log.collect()
+	file "trimming/*" from trimming_log.collect()
+// 	file "foreign_genome_indexing_mqc.yaml" from index_foreign_genome_log.collect()
+	file "decontam/*" from decontaminate_log.collect()
+	path "fastqc_QCd/*" from fastqc_qcd_project_log.collect()
+	path "metaphlan/*" from profile_taxa_project_log.collect()
+		//atm we do nothing with the qiime output
+	path "qiime/*" from alpha_diversity_project_log.collect()
+	file "humann/*" from profile_functions_project_log.collect()
+
 	output:
-	path "*multiqc_report*.html" into multiqc_report
+	path "*multiqc_report*.html"
 	path "*multiqc_data*"
 
 	script:
 	"""
-	multiqc --config $multiqc_config . -f
-	mv multiqc_report.html ${params.prefix}_multiqc_report_${params.mode}.html
-	mv multiqc_data ${params.prefix}_multiqc_data_${params.mode}
-	"""
+	printf "\\traw\\tdeduped\\n" > dedup_data.txt
+	for f in dedup/*.yaml
+		do
+		filename=\${f##*/}
+		samplename=\${filename%.yaml}
+		raw=\$(grep "<dt>Input:</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed 's/<\\/dd>.*\$//g' | grep -o "^[0-9]*")
+		surviving=\$(grep "<dt>Surviving:</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed 's/<\\/dd>.*\$//g' | grep -o "^[0-9]*")
+		printf "%s\\t%s\\n" "\${samplename}" "\${raw}" "\${surviving}" >> dedup_data.txt
+	done
+
+	printf "\\tsynDecontam\\ttrimmed\\n" > bbduk_data.txt
+	for f in syncontam/*.yaml
+		do
+		filename=\${f##*/}
+		samplename=\${filename%.yaml}
+		reads=\$(grep "<dt>Surviving:</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed 's/<\\/dd>.*\$//g' | grep -o "^[0-9]*")
+		printf "%s\\t%s\\n" "\${samplename}" "\${reads}" >> bbduk_data.txt
+	done
+
+	for f in trimming/*.yaml
+		do
+		filename=\${f##*/}
+		samplename=\${filename%.yaml}
+		reads=\$(grep "<dt>Surviving:</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed 's/<\\/dd>.*\$//g' | grep -o "^[0-9]*")
+		sedstr="s/(\${samplename}.*)\$/\\1\\t\${reads}/"
+		sed -i -E "\${sedstr}" bbduk_data.txt
+	done
+
+	printf "\\tdecontam\\n" > decontam_data.txt
+	for f in decontam/*.yaml
+		do
+		filename=\${f##*/}
+		samplename=\${filename%.yaml}
+		reads=\$(grep "<dt>Surviving:</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed 's/<\\/dd>.*\$//g' | grep -o "^[0-9]*")
+		printf "%s\\t%s\\n" "\${samplename}" "\${reads}" >> decontam_data.txt
+	done
+
+	printf "\\tnSpecies\\n" > profile_taxa_data.txt
+	for f in metaphlan/*.yaml
+		do
+		filename=\${f##*/}
+		samplename=\${filename%.yaml}
+		species=\$(grep "<dt>Species</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed 's/<\\/dd>.*\$//g')
+		printf "%s\\t%s\\n" "\${samplename}" "\${species}" >> profile_taxa_data.txt
+	done
+
+	printf "\\tpercExplained\\tgeneFamilies\\n" > profile_functions_data.txt
+	for f in humann/*.yaml
+		do
+		filename=\${f##*/}
+		samplename=\${filename%.yaml}
+		species=\$(grep "<dt>Input after QC</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed 's/<\\/dd>.*\$//g')
+		explained=\$(grep "<dt>Selected species explain</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed "s/% of QC'd reads<\\/dd>.*\$//g")
+		genes=\$(grep "<dt>Total gene families</dt><dd>" \${f} | sed 's/^.*<dd>//g' | sed 's| (after translated alignment)</dd>||g')
+		printf "%s\\t%s\\t%s\\n" "\${samplename}" "\${explained}" "\${genes}" >> profile_functions_data.txt
+	done
+
+	multiqc --config $multiqc_config . -f --custom-css-file yamp.css
+    """
+	
+	// """
+	// multiqc --config $multiqc_config . -f --custom-css-file yamp.css
+	// mv multiqc_report.html ${name}_multiqc_report_${params.mode}.html
+	// mv multiqc_data ${name}_multiqc_data_${params.mode}
+	// """
 }
+
 
 
