@@ -380,6 +380,8 @@ if (params.singleEnd) {
 	.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants }
 } else {
 	if(params.qc_matepairs) {
+			//Channel.fromFilePairs('/some/data/*', size: -1) { file -> file.extension }
+
 		Channel
 		.fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz", checkIfExists: true)
 		//.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
