@@ -150,13 +150,13 @@ if (params.mode != "characterisation" && ( (!params.singleEnd && (params.reads1 
 }
 
 //Creates working dir
-workingpath = params.outdir + "/" + params.prefix
-workingdir = file(workingpath)
-if( !workingdir.exists() ) {
-	if( !workingdir.mkdirs() ) 	{
-		exit 1, "Cannot create working directory: $workingpath"
-	} 
-}	
+// workingpath = params.outdir + "/" + params.prefix
+// workingdir = file(workingpath)
+// if( !workingdir.exists() ) {
+// 	if( !workingdir.mkdirs() ) 	{
+// 		exit 1, "Cannot create working directory: $workingpath"
+// 	} 
+// }	
 
 
 // Header log info
@@ -288,7 +288,6 @@ if (params.mode != "QC")
 //Folders
 summary['Folders'] = ""
 summary['Input directory'] = params.reads
-summary['Output dir'] = workingpath
 summary['Working dir'] = workflow.workDir
 summary['Output dir'] = params.outdir
 summary['Script dir'] = workflow.projectDir
@@ -297,6 +296,13 @@ summary['Launching dir'] = workflow.launchDir
 log.info summary.collect { k,v -> "${k.padRight(27)}: $v" }.join("\n")
 log.info ""
 
+// def sample_pubdir(name) {
+// 	folder = new File(params.outdir + "/" + name + "/ANALYSIS/")
+// 	if( !folder.exists() ) {
+// 		folder.mkdirs()
+// 	}
+// 	return folder.getPath()
+// }
 
 /**
 	Prepare workflow introspection
@@ -366,211 +372,6 @@ process get_software_versions {
 
 // software_versions_yaml = software_versions_yaml.first()
 
-/**
-	Creates a set of channels for input read files.
-	- read_files_fastqc is used for the first QC assessment (on the raw reads)
-	- read_files_dedup  is used for the deduplication step (which is optional and may skip to trimming)
-	- read_files_trim   is used for the decontamination from synthetic contaminants (used only if
-	  deduplication is not run)
-*/
-
-if (params.singleEnd) {
-	Channel
-	.from([[params.prefix, [file(params.reads1)]]])
-	.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants }
-} else {
-	if(params.qc_matepairs) {
-			//Channel.fromFilePairs('/some/data/*', size: -1) { file -> file.extension }
-
-		Channel
-		.fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz", checkIfExists: true)
-		//.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
-		.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants; read_files_log }
-	} else {
-		Channel.fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz", checkIfExists: true)
-		.set {to_combine_reads}
-	}
-}
-
-process merge_paired_end_raw {
-	tag "$name"
-
-	input:
-	tuple val(name), file(reads) from to_combine_reads
-
-	output:
-	tuple val(name), path("*.fq.gz") into read_files_fastqc, read_files_dedup, read_files_synthetic_contaminants, read_files_log
-
-	script:
-	"""
-	gunzip --force < "${reads[0]}" >> "${name}.fq"
-	gunzip --force < "${reads[1]}" >> "${name}.fq"
-	gzip --force < "${name}.fq" > "${name}.fq.gz"
-	"""
-}
-
-// ------------------------------------------------------------------------------   
-//	QUALITY CONTROL 
-// ------------------------------------------------------------------------------   
-
-/**
-	Quality Control - STEP 1. De-duplication. Only exact duplicates are removed.
-
-	This step is OPTIONAL. De-duplication should be carried on iff you are
-    using PCR amplification (in this case identical reads are technical artefacts)
-	but not otherwise (identical reads will identify natural duplicates).
-*/
-
-process dedup {
-	
-    tag "$name"
-    
-	//Enable multicontainer settings
-    if (workflow.containerEngine == 'singularity') {
-        container params.singularity_container_bbmap
-    } else {
-        container params.docker_container_bbmap
-    }
-		
-	input:
-	tuple val(name), file(reads) from read_files_dedup
-
-	output:
-	tuple val(name), path("${name}_dedup*.fq.gz") into to_synthetic_contaminants
-	file "*.yaml" into dedup_log
-	
-	when:
-	params.mode != "characterisation" && params.dedup
-
-	script:
-	// This is to deal with single and paired end reads
-	def input = (params.singleEnd || ! params.qc_matepairs) ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\" in2=\"${reads[1]}\""
-	def output = (params.singleEnd || ! params.qc_matepairs) ? "out=\"${name}_dedup.fq.gz\"" :  "out1=\"${name}_dedup_R1.fq.gz\" out2=\"${name}_dedup_R2.fq.gz\""
-	
-	"""
-	#Sets the maximum memory to 4/5 of the value requested in the config file
-	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
-	#maxmem=\$(echo \"$task.memory\" | sed 's/ //g' | sed 's/B//g')
-	echo \"$reads\"
-    clumpify.sh -Xmx\"\$maxmem\" $input $output qin=$params.qin dedupe subs=0 threads=${task.cpus} &> dedup_mqc.txt
-	
-	# MultiQC doesn't have a module for clumpify yet. As a consequence, I
-	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_dedup_log.sh > ${name}.yaml
-	"""
-}
-
-/**
-	Quality control - STEP 2. A decontamination of synthetic sequences and artefacts 
-	is performed.
-*/
-
-//When the de-duplication is not done, the raw file should be pushed in the correct channel
-//FIXME: make this also optional?
-if (!params.dedup & params.mode != "characterisation") {
-	to_synthetic_contaminants = read_files_synthetic_contaminants
-	dedup_log = Channel.from(file("$baseDir/assets/no_dedup.yaml"))
-}
-
-// Defines channels for resources file 
-artefacts = file(params.artefacts, type: "file", checkIfExists: true )
-phix174ill = file(params.phix174ill, type: "file", checkIfExists: true)
-
-process remove_synthetic_contaminants {
-	
-	tag "$name"
-	
-	//Enable multicontainer settings
-    if (workflow.containerEngine == 'singularity') {
-        container params.singularity_container_bbmap
-    } else {
-        container params.docker_container_bbmap
-    }
-
-	input:
-	tuple val(name), file(reads) from to_synthetic_contaminants
-	file(artefacts) from artefacts
-	file(phix174ill) from phix174ill
-   
-	output:
-	tuple val(name), path("${name}_no_synthetic_contaminants*.fq.gz") into to_trim
-	file "*.yaml" into synthetic_contaminants_log
-	
-	when:
-	params.mode != "characterisation"
-
-   	script:
-	def input = params.singleEnd ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\" in2=\"${reads[1]}\""
-	def output = params.singleEnd ? "out=\"${name}_no_synthetic_contaminants.fq.gz\"" :  "out=\"${name}_no_synthetic_contaminants_R1.fq.gz\" out2=\"${name}_no_synthetic_contaminants_R2.fq.gz\""
-	"""
-	#Sets the maximum memory to the value requested in the config file
-	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
-	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
-	bbduk.sh -Xmx\"\$maxmem\" $input $output k=31 ref=$phix174ill,$artefacts qin=$params.qin threads=${task.cpus} ow &> synthetic_contaminants_mqc.txt
-	
-	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
-	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_remove_synthetic_contaminants_log.sh > ${name}.yaml
-	"""
-}
-
-
-/**
-	Quality control - STEP 3. Trimming of low quality bases and of adapter sequences. 
-	Short reads are discarded. 
-	
-	If dealing with paired-end reads, when either forward or reverse of a paired-read
-	are discarded, the surviving read is saved on a file of singleton reads.
-*/
-
-// Defines channels for resources file 
-adapters = file(params.adapters, type: "file", checkIfExists: true)
-
-process trim {
-
-	tag "$name"
-	
-	//Enable multicontainer settings
-    if (workflow.containerEngine == 'singularity') {
-        container params.singularity_container_bbmap
-    } else {
-        container params.docker_container_bbmap
-    }
-	
-	input:
-	tuple val(name), file(reads) from to_trim
-	file(adapters) from adapters
-	output:
-	tuple val(name), path("${name}_trimmed*.fq.gz") into to_decontaminate
-	file "*.yaml" into trimming_log
-	
-	when:
-	params.mode != "characterisation"
-
-   	script:
-	def input = params.singleEnd ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\" in2=\"${reads[1]}\""
-	def output = params.singleEnd ? "out=\"${name}_trimmed.fq.gz\"" :  "out=\"${name}_trimmed_R1.fq.gz\" out2=\"${name}_trimmed_R2.fq.gz\" outs=\"${name}_trimmed_singletons.fq.gz\""
-	"""
-	#Sets the maximum memory to the value requested in the config file
-	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
-	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
-
-	bbduk.sh -Xmx\"\$maxmem\" $input $output ktrim=r k=$params.kcontaminants mink=$params.mink hdist=$params.hdist qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters qin=$params.qin threads=${task.cpus} tbo tpe ow &> trimming_mqc.txt
-
-	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
-	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_trimming_log.sh > ${name}.yaml
-	"""
-}
-
-
-/**
-	Quality control - STEP 4. Decontamination. Removes external organisms' contamination, 
-	using given genomes. 
-
-	When an indexed contaminant (pan)genome is not provided, the index_foreign_genome process is run 
-	before the decontamination process. This process require the FASTA file of the contaminant (pan)genome.
-*/
 
 // Defines channels for foreign_genome file 
 foreign_genome = file( "${params.foreign_genome}", type: "file", checkIfExists: true )
@@ -616,52 +417,331 @@ if (params.foreign_genome_ref != "") {
 	ref_foreign_genome = file(params.foreign_genome_ref, checkIfExists: true )
 }
 
-process decontaminate {
+/**
+	Creates a set of channels for input read files.
+	- read_files_fastqc is used for the first QC assessment (on the raw reads)
+	- read_files_dedup  is used for the deduplication step (which is optional and may skip to trimming)
+	- read_files_trim   is used for the decontamination from synthetic contaminants (used only if
+	  deduplication is not run)
+*/
 
-    tag "$name"
+if (params.singleEnd) {
+	Channel
+	.from([[params.prefix, [file(params.reads1)]]])
+	.into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants }
+} else {
+	if(params.qc_matepairs) {
+		Channel.fromFilePairs("${params.reads}/*/ILLUMINA_DATA/*_R{1,2}.fastq.gz", size: -1) { file -> file.getParent().getParent().getName() }
+			.into {read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants; read_files_log }
+		// Channel
+		// .fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz", checkIfExists: true)
+		// //.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
+		// .into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants; read_files_log }
+	} else {
+		Channel.fromFilePairs("${params.reads}/*/ILLUMINA_DATA/*_R{1,2}.fastq.gz", size: -1) { file -> file.getParent().getParent().getName() }
+			.set { to_combine_reads }
+		// Channel.fromFilePairs("${params.reads}/*_R{1,2}.fastq.gz", checkIfExists: true)
+		// .set {to_combine_reads}
+	}
+}
 
-	//Enable multicontainer settings
-    if (workflow.containerEngine == 'singularity') {
-        container params.singularity_container_bbmap
-    } else {
-        container params.docker_container_bbmap
-    }
+// Defines channels for resources file 
+artefacts = file(params.artefacts, type: "file", checkIfExists: true )
+phix174ill = file(params.phix174ill, type: "file", checkIfExists: true)
+adapters = file(params.adapters, type: "file", checkIfExists: true)
 
-	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*QCd.fq.gz"
+process preprocess {
+	tag "$name"
+
+	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'copy', pattern: "decontam/*.fq.gz", saveAs: {filename -> file(filename).getName()}
 
 	input:
-	tuple val(name), file(reads) from to_decontaminate
+	tuple val(name), file(reads) from to_combine_reads
+	file(artefacts) from artefacts
+	file(phix174ill) from phix174ill
+	file(adapters) from adapters
 	path(ref_foreign_genome) from ref_foreign_genome
 
 	output:
-	tuple val(name), path("decontam/*.fq.gz") into qcd_reads
-	tuple val(name), path("decontam/*.fq.gz") into to_profile_taxa_decontaminated
-	file "*.yaml" into decontaminate_log
+	tuple val(name), path("${name}.fq.gz") into read_files_fastqc, read_files_log
+	file "dedup/*.yaml" into dedup_log
+	file "syndecontam/*.yaml" into synthetic_contaminants_log
+	file "trim/*.yaml" into trimming_log
+	tuple val(name), path("decontam/*_QCd.fq.gz") into qcd_reads
+	tuple val(name), path("decontam/*_QCd.fq.gz") into to_profile_taxa_decontaminated
+	file "decontam/*.yaml" into decontaminate_log
 
-	when:
-	params.mode != "characterisation"
+	// parameters params.singleEnd, params.qc_matepairs, params.dedup, params.mode come into effect here
 
 	script:
-	// When paired-end are used, decontamination is carried on independently on paired reads
-	// and on singleton reads thanks to BBwrap, that calls BBmap once on the paired reads
-	// and once on the singleton ones, merging the results on a single output file
-	def input = params.singleEnd ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\",\"${reads[2]}\" in2=\"${reads[1]}\",null"
-	def outputu = "\"decontam/${name}.fq.gz\""
-	def outputm = "\"${name}_contamination.fq.gz\""
+	// myList = [1776, -1, 33, 99, 0, 928734928763]
+	// def input = (params.singleEnd || ! params.qc_matepairs) ? ["in=": "\"${reads[0]}\""] :  ["in1=": \"${reads[0]}\"", "in2=":"\"${reads[1]}\""]
+	// def deduped = (params.singleEnd || ! params.qc_matepairs) ? "out=\"${name}_dedup.fq.gz\"" :  "out1=\"${name}_dedup_R1.fq.gz\" out2=\"${name}_dedup_R2.fq.gz\""
+	// def syndecontam_in = (params.singleEnd || ! params.qc_matepairs) ? "in=\"${name}_dedup.fq.gz\"" :  "in1=\"${name}_dedup_R1.fq.gz\" in2=\"${name}_dedup_R2.fq.gz\""
+	// def syndecontam_out = (params.singleEnd || ! params.qc_matepairs) ? "out=\"${name}_no_synthetic_contaminants.fq.gz\"" :  "out=\"${name}_no_synthetic_contaminants_R1.fq.gz\" out2=\"${name}_no_synthetic_contaminants_R2.fq.gz\""
+	// def trim_in = (params.singleEnd || ! params.qc_matepairs) ? "in=\"${name}_no_synthetic_contaminants.fq.gz\"" :  "in1=\"${name}_no_synthetic_contaminants_R1.fq.gz\" in2=\"${name}_no_synthetic_contaminants_R2.fq.gz\""
+	// def trim_out = params.singleEnd ? "out=\"${name}_trimmed.fq.gz\"" :  "out=\"${name}_trimmed_R1.fq.gz\" out2=\"${name}_trimmed_R2.fq.gz\" outs=\"${name}_trimmed_singletons.fq.gz\""
+	// // When paired-end are used, decontamination is carried on independently on paired reads
+	// // and on singleton reads thanks to BBwrap, that calls BBmap once on the paired reads
+	// // and once on the singleton ones, merging the results on a single output file
+	// def decontam_in = params.singleEnd ? "in=\"${name}_trimmed.fq.gz\"" :  "in1=\"${name}_trimmed_R1.fq.gz\",\"${name}_trimmed_singletons.fq.gz\" in2=\"${name}_trimmed_R2.fq.gz\",null"
+	// def outputu = "\"decontam/${name}.fq.gz\""
+	// def outputm = "\"${name}_contamination.fq.gz\""
+
 	"""
+	#Sets the maximum memory to 4/5 of the value requested in the config file
+	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') * 4 / 5))G\"
+	
+	# concat read pairs
+	reformat.sh -Xmx\"\$maxmem\" in1="${reads[0]}" in2="${reads[1]}" out="${name}.fq.gz"
+	
+	# dedup
+    clumpify.sh -Xmx\"\$maxmem\" in=${name}.fq.gz out=\"${name}_dedup.fq.gz\" qin=$params.qin dedupe reorder subs=0 threads=${task.cpus} &> dedup_mqc.txt
+
+	# MultiQC doesn't have a module for clumpify yet. As a consequence, I
+	# had to create a YAML file with all the info I need via a bash script
+	mkdir dedup
+	bash scrape_dedup_log.sh > dedup/${name}.yaml
+
+	# remove synthetic contaminants
+	bbduk.sh -Xmx\"\$maxmem\" in=\"${name}_dedup.fq.gz\" out=\"${name}_no_synthetic_contaminants.fq.gz\" k=31 ref=$phix174ill,$artefacts qin=$params.qin ordered=t threads=${task.cpus} ow &> synthetic_contaminants_mqc.txt
+	rm \"${name}_dedup.fq.gz\"
+	# rm \"${name}_dedup_R2.fq.gz\"
+
+	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
+	# had to create a YAML file with all the info I need via a bash script
+	mkdir syndecontam
+	bash scrape_remove_synthetic_contaminants_log.sh > syndecontam/${name}.yaml
+
+	# trim
+	bbduk.sh -Xmx\"\$maxmem\" in=\"${name}_no_synthetic_contaminants.fq.gz\" out=\"${name}_trimmed.fq.gz\" ktrim=r k=$params.kcontaminants mink=$params.mink hdist=$params.hdist qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters qin=$params.qin ordered=t threads=${task.cpus} tbo tpe ow &> trimming_mqc.txt
+	rm \"${name}_no_synthetic_contaminants.fq.gz\"
+	# rm \"${name}_no_synthetic_contaminants_R2.fq.gz\"
+
+	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
+	# had to create a YAML file with all the info I need via a bash script
+	mkdir trim
+	bash scrape_trimming_log.sh > trim/${name}.yaml
+
+	# decontaminate
 	mkdir decontam
 
-	#Sets the maximum memory to the value requested in the config file
-	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
-	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
-
-	bbwrap.sh -Xmx\"\$maxmem\"  mapper=bbmap append=t $input outu=$outputu outm=$outputm minid=$params.mind maxindel=$params.maxindel bwr=$params.bwr bw=12 minhits=2 qtrim=rl trimq=$params.phred path="./" qin=$params.qin threads=${task.cpus} untrim quickmatch fast ow &> decontamination_mqc.txt
+	bbwrap.sh -Xmx\"\$maxmem\" mapper=bbmap append=t in=\"${name}_trimmed.fq.gz\" outu=\"decontam/${name}_QCd.fq.gz\" outm=\"decontam/${name}_contamination.fq.gz\" minid=$params.mind maxindel=$params.maxindel bwr=$params.bwr bw=12 minhits=2 qtrim=rl trimq=$params.phred path="./" qin=$params.qin threads=${task.cpus} untrim quickmatch fast ordered=t ow &> decontamination_mqc.txt
+	rm \"${name}_trimmed.fq.gz\"
+	#rm \"${name}_trimmed_singletons.fq.gz\"
+	# rm \"${name}_trimmed_R2.fq.gz\"
 
 	# MultiQC doesn't have a module for bbwrap yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_decontamination_log.sh $outputu $outputm > ${name}.yaml
+	bash scrape_decontamination_log.sh \"decontam/${name}_QCd.fq.gz\" \"decontam/${name}_contamination.fq.gz\" > decontam/${name}.yaml
 	"""
 }
+
+// ------------------------------------------------------------------------------   
+//	QUALITY CONTROL 
+// ------------------------------------------------------------------------------   
+
+/**
+	Quality Control - STEP 1. De-duplication. Only exact duplicates are removed.
+
+	This step is OPTIONAL. De-duplication should be carried on iff you are
+    using PCR amplification (in this case identical reads are technical artefacts)
+	but not otherwise (identical reads will identify natural duplicates).
+*/
+
+// process dedup {
+	
+//     tag "$name"
+    
+// 	//Enable multicontainer settings
+//     if (workflow.containerEngine == 'singularity') {
+//         container params.singularity_container_bbmap
+//     } else {
+//         container params.docker_container_bbmap
+//     }
+		
+// 	input:
+// 	tuple val(name), file(reads) from read_files_dedup
+
+// 	output:
+// 	tuple val(name), path("${name}_dedup*.fq.gz") into to_synthetic_contaminants
+// 	file "*.yaml" into dedup_log
+	
+// 	// when:
+// 	// params.mode != "characterisation" && params.dedup
+
+// 	script:
+// 	// This is to deal with single and paired end reads
+// 	def input = (params.singleEnd || ! params.qc_matepairs) ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\" in2=\"${reads[1]}\""
+// 	def output = (params.singleEnd || ! params.qc_matepairs) ? "out=\"${name}_dedup.fq.gz\"" :  "out1=\"${name}_dedup_R1.fq.gz\" out2=\"${name}_dedup_R2.fq.gz\""
+	
+// 	"""
+// 	#Sets the maximum memory to 4/5 of the value requested in the config file
+// 	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
+// 	#maxmem=\$(echo \"$task.memory\" | sed 's/ //g' | sed 's/B//g')
+// 	echo \"$reads\"
+//     clumpify.sh -Xmx\"\$maxmem\" $input $output qin=$params.qin dedupe subs=0 threads=${task.cpus} &> dedup_mqc.txt
+	
+// 	# MultiQC doesn't have a module for clumpify yet. As a consequence, I
+// 	# had to create a YAML file with all the info I need via a bash script
+// 	bash scrape_dedup_log.sh > ${name}.yaml
+// 	"""
+// }
+
+// /**
+// 	Quality control - STEP 2. A decontamination of synthetic sequences and artefacts 
+// 	is performed.
+// */
+
+// //When the de-duplication is not done, the raw file should be pushed in the correct channel
+// //FIXME: make this also optional?
+// if (!params.dedup & params.mode != "characterisation") {
+// 	to_synthetic_contaminants = read_files_synthetic_contaminants
+// 	dedup_log = Channel.from(file("$baseDir/assets/no_dedup.yaml"))
+// }
+
+
+// process remove_synthetic_contaminants {
+	
+// 	tag "$name"
+	
+// 	//Enable multicontainer settings
+//     if (workflow.containerEngine == 'singularity') {
+//         container params.singularity_container_bbmap
+//     } else {
+//         container params.docker_container_bbmap
+//     }
+
+// 	input:
+// 	tuple val(name), file(reads) from to_synthetic_contaminants
+// 	file(artefacts) from artefacts
+// 	file(phix174ill) from phix174ill
+   
+// 	output:
+// 	tuple val(name), path("${name}_no_synthetic_contaminants*.fq.gz") into to_trim
+// 	file "*.yaml" into synthetic_contaminants_log
+	
+// 	when:
+// 	params.mode != "characterisation"
+
+//    	script:
+// 	def input = params.singleEnd ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\" in2=\"${reads[1]}\""
+// 	def output = params.singleEnd ? "out=\"${name}_no_synthetic_contaminants.fq.gz\"" :  "out=\"${name}_no_synthetic_contaminants_R1.fq.gz\" out2=\"${name}_no_synthetic_contaminants_R2.fq.gz\""
+// 	"""
+// 	#Sets the maximum memory to the value requested in the config file
+// 	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
+// 	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
+// 	bbduk.sh -Xmx\"\$maxmem\" $input $output k=31 ref=$phix174ill,$artefacts qin=$params.qin threads=${task.cpus} ow &> synthetic_contaminants_mqc.txt
+	
+// 	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
+// 	# had to create a YAML file with all the info I need via a bash script
+// 	bash scrape_remove_synthetic_contaminants_log.sh > ${name}.yaml
+// 	"""
+// }
+
+
+/**
+	Quality control - STEP 3. Trimming of low quality bases and of adapter sequences. 
+	Short reads are discarded. 
+	
+	If dealing with paired-end reads, when either forward or reverse of a paired-read
+	are discarded, the surviving read is saved on a file of singleton reads.
+*/
+
+
+// process trim {
+
+// 	tag "$name"
+	
+// 	//Enable multicontainer settings
+//     if (workflow.containerEngine == 'singularity') {
+//         container params.singularity_container_bbmap
+//     } else {
+//         container params.docker_container_bbmap
+//     }
+	
+// 	input:
+// 	tuple val(name), file(reads) from to_trim
+// 	file(adapters) from adapters
+// 	output:
+// 	tuple val(name), path("${name}_trimmed*.fq.gz") into to_decontaminate
+// 	file "*.yaml" into trimming_log
+	
+// 	when:
+// 	params.mode != "characterisation"
+
+//    	script:
+// 	def input = params.singleEnd ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\" in2=\"${reads[1]}\""
+// 	def output = params.singleEnd ? "out=\"${name}_trimmed.fq.gz\"" :  "out=\"${name}_trimmed_R1.fq.gz\" out2=\"${name}_trimmed_R2.fq.gz\" outs=\"${name}_trimmed_singletons.fq.gz\""
+// 	"""
+// 	#Sets the maximum memory to the value requested in the config file
+// 	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
+// 	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
+
+// 	bbduk.sh -Xmx\"\$maxmem\" $input $output ktrim=r k=$params.kcontaminants mink=$params.mink hdist=$params.hdist qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters qin=$params.qin threads=${task.cpus} tbo tpe ow &> trimming_mqc.txt
+
+// 	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
+// 	# had to create a YAML file with all the info I need via a bash script
+// 	bash scrape_trimming_log.sh > ${name}.yaml
+// 	"""
+// }
+
+
+/**
+	Quality control - STEP 4. Decontamination. Removes external organisms' contamination, 
+	using given genomes. 
+
+	When an indexed contaminant (pan)genome is not provided, the index_foreign_genome process is run 
+	before the decontamination process. This process require the FASTA file of the contaminant (pan)genome.
+*/
+
+
+// process decontaminate {
+
+//     tag "$name"
+
+// 	//Enable multicontainer settings
+//     if (workflow.containerEngine == 'singularity') {
+//         container params.singularity_container_bbmap
+//     } else {
+//         container params.docker_container_bbmap
+//     }
+
+// 	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*QCd.fq.gz"
+
+// 	input:
+// 	tuple val(name), file(reads) from to_decontaminate
+// 	path(ref_foreign_genome) from ref_foreign_genome
+
+// 	output:
+// 	tuple val(name), path("decontam/*.fq.gz") into qcd_reads
+// 	tuple val(name), path("decontam/*.fq.gz") into to_profile_taxa_decontaminated
+// 	file "*.yaml" into decontaminate_log
+
+// 	when:
+// 	params.mode != "characterisation"
+
+// 	script:
+// 	// When paired-end are used, decontamination is carried on independently on paired reads
+// 	// and on singleton reads thanks to BBwrap, that calls BBmap once on the paired reads
+// 	// and once on the singleton ones, merging the results on a single output file
+// 	def input = params.singleEnd ? "in=\"${reads[0]}\"" :  "in1=\"${reads[0]}\",\"${reads[2]}\" in2=\"${reads[1]}\",null"
+// 	def outputu = "\"decontam/${name}.fq.gz\""
+// 	def outputm = "\"${name}_contamination.fq.gz\""
+// 	"""
+// 	mkdir decontam
+
+// 	#Sets the maximum memory to the value requested in the config file
+// 	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
+// 	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') / 5 * 4))G\"
+
+// 	bbwrap.sh -Xmx\"\$maxmem\"  mapper=bbmap append=t $input outu=$outputu outm=$outputm minid=$params.mind maxindel=$params.maxindel bwr=$params.bwr bw=12 minhits=2 qtrim=rl trimq=$params.phred path="./" qin=$params.qin threads=${task.cpus} untrim quickmatch fast ow &> decontamination_mqc.txt
+
+// 	# MultiQC doesn't have a module for bbwrap yet. As a consequence, I
+// 	# had to create a YAML file with all the info I need via a bash script
+// 	bash scrape_decontamination_log.sh $outputu $outputm > ${name}.yaml
+// 	"""
+// }
 
 
 // ------------------------------------------------------------------------------   
@@ -680,10 +760,10 @@ process quality_assessment {
         container params.docker_container_fastqc
     }
 	
-	publishDir "${params.outdir}/${name}/fastqc", mode: 'copy' //,
+	publishDir "${params.outdir}/${name}/ANALYSIS/fastqc", mode: 'copy' //,
 
     input:
-    tuple val(name), file(reads: 'raw/*'), file(qcd_reads: 'qcd/*') from read_files_fastqc.join(qcd_reads, failOnDuplicate: true, failOnMismatch: true)
+    tuple val(name), file(reads: 'raw/*'), file(qcd_reads: "qcd/${name}.fq.gz") from read_files_fastqc.join(qcd_reads, failOnDuplicate: true, failOnMismatch: true)
 	
     output:
     path "raw/*_fastqc.{zip,html}" into fastqc_sample_log, fastqc_raw_project_log
@@ -792,7 +872,7 @@ process profile_taxa {
         container params.docker_container_biobakery
     }
 
-	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*.{biom,tsv}"
+	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'copy', pattern: "*.{biom,tsv}"
 	
 	input:
 	tuple val(name), file(reads) from to_profile_taxa_decontaminated.mix(to_profile_taxa_merged).mix(reads_profile_taxa)
@@ -910,7 +990,11 @@ process profile_function {
         container params.docker_container_biobakery
     }
 
-	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*.{tsv,log}"
+	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'copy', pattern: "*.{tsv,log}"
+	publishDir "${params.outdir}/${name}/ANALYSIS/humann_intermediate", mode: 'move', pattern: "${name}_humann_temp/*", saveAs: {filename -> 
+		f = new File(filename);
+		f.getName()
+	}
 	
 	input:
 	// FIXME the metaphlan bug list is A but the reads are B!!!
@@ -920,6 +1004,7 @@ process profile_function {
 
     output:
 	file "*_HUMAnN.log"
+	path "${name}_humann_temp/*"
 	file "*_genefamilies.tsv" into humann_gene_families
 	file "*_pathcoverage.tsv" into humann_path_coverage
 	file "*_pathabundance.tsv" into humann_path_abundance
@@ -932,8 +1017,11 @@ process profile_function {
 	"""
 	#HUMAnN will uses the list of species detected by the profile_taxa process
 
-	humann --input $reads --output . --output-basename ${name} --taxonomic-profile $metaphlan_bug_list --nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads ${task.cpus} --memory-use minimum &> ${name}_HUMAnN.log 
-	
+	humann --input $reads --output . --output-basename ${name} --taxonomic-profile $metaphlan_bug_list --nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads ${task.cpus} --memory-use maximum &> ${name}_HUMAnN.log 
+	bgzip ${name}_humann_temp/*.sam --compress-level 9
+	bgzip ${name}_humann_temp/*.fa --compress-level 9
+	bgzip ${name}_humann_temp/*.tsv --compress-level 9
+
 	# MultiQC doesn't have a module for humann yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
 	bash scrape_profile_functions.sh ${name} ${name}_HUMAnN.log ${reads} > ${name}.yaml
@@ -990,7 +1078,7 @@ process alpha_diversity {
         container params.docker_container_qiime2
     }
 
-	publishDir "${params.outdir}/${name}", mode: 'copy', pattern: "*.{tsv}"
+	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'copy', pattern: "*.{tsv}"
 	
 	input:
 	tuple val(name), file(metaphlan_bug_list) from to_alpha_diversity
