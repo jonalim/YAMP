@@ -964,14 +964,14 @@ process hclust_taxonomic_profiles {
 	hclust2.py -i ${table_stratified} -o metaphlan.top50.hclust2.png --sep '\\s+' --skip_rows 0 \\
 		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s --fperc 99 \\
 		--flabel_size 4 --legend_file metaphlan.hclust2.legend.png --max_flabel_len 100 \\
-		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete
+		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete --no_fclustering
 
 	sed -i 's/\\t/ /g' ${table_species}
 
 	hclust2.py -i ${table_species} -o metaphlan.species.top50.hclust2.png --sep '\\s+' --skip_rows 0 \\
 		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s --fperc 99 \\
 		--flabel_size 4 --legend_file metaphlan.species.hclust2.legend.png --max_flabel_len 100 \\
-		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete
+		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete --no_fclustering
 	"""
 }
 
@@ -1116,18 +1116,18 @@ process hclust_functional_profiles {
 	hclust2.py -i ${gene_fam_table} -o all_genefamilies.top50.hclust2.png --sep '\\s+' --skip_rows 0 \\
 		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s --fperc 99 \\
 		--flabel_size 4 --legend_file all_genefamilies.top50.legend.png --max_flabel_len 100 \\
-		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete
+		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete --no_fclustering
 
 	hclust2.py -i ${path_cov_table} -o all_pathcoverage.top50.hclust2.png --sep '\\s+' --skip_rows 0 \\
 		--ftop 50 --f_dist_f cosine --s_dist_f cityblock --cell_aspect_ratio 9 -s --fperc 99 \\
 		--flabel_size 4 --legend_file all_pathcoverage.top50.legend.png --max_flabel_len 100 \\
-		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete
+		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete --no_fclustering
 
 	hclust2.py -i ${path_abund_table} -o all_pathabundance.top50.hclust2.png --sep '\\s+' \\
 		--skip_rows 0 --ftop 50 --f_dist_f cosine --s_dist_f canberra --cell_aspect_ratio 9 -s \\
 		--fperc 99 --flabel_size 4 --legend_file all_pathabundance.top50.legend.png \\
 		--max_flabel_len 100 --metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 \\
-		--slinkage complete
+		--slinkage complete --no_fclustering
 	"""
 }
 
@@ -1282,19 +1282,26 @@ process log {
 		printf "%s\\t%s\\n" "\${samplename}" "\${species}" >> profile_taxa_data.txt
 	done
 
-	printf "\\tpercExplained\\tgeneFamilies\\n" > profile_functions_data.txt
+	got_head=0
+	printf "\\tpercExplained\\tgeneFamilies\\n"
 	for f in humann/*.yaml
 		do
-		filename=\${f##*/}
-		samplename=\${filename%.yaml}
-		species=\$(grep "<dt>Input after QC</dt><dd>" \${f} | sed 's/^.*<dd>//g' | \\
-			sed 's/<\\/dd>.*\$//g')
-		explained=\$(grep "<dt>Selected species explain</dt><dd>" \${f} | sed 's/^.*<dd>//g' | \\
-			sed "s/% of QC'd reads<\\/dd>.*\$//g")
-		genes=\$(grep "<dt>Total gene families</dt><dd>" \${f} | sed 's/^.*<dd>//g' | \\
-			sed 's| (after translated alignment)</dd>||g')
-		printf "%s\\t%s\\t%s\\n" "\${samplename}" "\${explained}" "\${genes}" >> \\
-			profile_functions_data.txt
+		if [[ \$got_head -eq 0 ]]; then
+			head -n 1 \${f} > profile_functions_data.txt
+			\$got_head=1
+		fi
+		sed '2q;d' \${f} >> profile_functions_data.txt
+
+		#filename=\${f##*/}
+		##samplename=\${filename%.yaml}
+		#species=\$(grep "<dt>Input after QC</dt><dd>" \${f} | sed 's/^.*<dd>//g' | \\
+		#	sed 's/<\\/dd>.*\$//g')
+		#explained=\$(grep "<dt>Selected species explain</dt><dd>" \${f} | sed 's/^.*<dd>//g' | \\
+		#	sed "s/% of QC'd reads<\\/dd>.*\$//g")
+		#genes=\$(grep "<dt>Total gene families</dt><dd>" \${f} | sed 's/^.*<dd>//g' | \\
+		#	sed 's| (after translated alignment)</dd>||g')
+		#printf "%s\\t%s\\t%s\\n" "\${samplename}" "\${explained}" "\${genes}" >> \\
+		#	profile_functions_data.txt
 	done
 
 	multiqc --config $multiqc_config . -f --custom-css-file yamp.css
