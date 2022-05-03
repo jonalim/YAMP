@@ -1033,18 +1033,11 @@ process profile_function {
 	"""
 	#HUMAnN will uses the list of species detected by the profile_taxa process
 
-	humann --input $reads --output . --output-basename ${name} --taxonomic-profile \
-		$metaphlan_bug_list --nucleotide-database $chocophlan \
-		--protein-database $uniref --pathways metacyc --threads ${task.cpus} \
-		--memory-use maximum &> ${name}_HUMAnN.log
-
-	bgzip ${name}_humann_temp/${name}_bowtie2_aligned.sam --compress-level 9 || true
-	bgzip ${name}_humann_temp/${name}_bowtie2_aligned.tsv --compress-level 9 || true
-	bgzip ${name}_humann_temp/${name}_bowtie2_unaligned.fa --compress-level 9 || true
-	bgzip ${name}_humann_temp/${name}_diamond_aligned.tsv --compress-level 9 || true
-	bgzip ${name}_humann_temp/${name}_diamond_unaligned.fa --compress-level 9 || true
-	# bgzip ${name}_humann_temp/*.fa --compress-level 9
-	# bgzip ${name}_humann_temp/*.tsv --compress-level 9
+	humann --input $reads --output . --output-basename ${name} --taxonomic-profile $metaphlan_bug_list --nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads ${task.cpus} --memory-use maximum &> ${name}_HUMAnN.log 
+	sleep 60
+	bgzip ${name}_humann_temp/*.sam --compress-level 9 || true
+	bgzip ${name}_humann_temp/*.tsv --compress-level 9 || true
+	bgzip ${name}_humann_temp/*.fa --compress-level 9 || true
 
 	# MultiQC doesn't have a module for humann yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
@@ -1174,9 +1167,13 @@ process alpha_diversity {
 		do
 			qiime diversity alpha --i-table ${name}_abundance_table.qza --p-metric \$alpha --output-dir \$alpha &> /dev/null
 			qiime tools export --input-path \$alpha/alpha_diversity.qza --output-path \${alpha} &> /dev/null
-			value=\$(sed -n '2p' \${alpha}/alpha-diversity.tsv | cut -f 2)
-		    echo -e  \$alpha'\t'\$value
-		done >> ${name}.tsv
+			if [[ -e "\${alpha}/alpha-diversity.tsv" ]]; then
+                value=\$(sed -n '2p' \${alpha}/alpha-diversity.tsv | cut -f 2)
+            else
+                value="#N/A"
+            fi
+		    echo -e  \$alpha'\t'\$value 
+		done >> ${name}.tsv  
 	fi
 
 	# MultiQC doesn't have a module for qiime yet. As a consequence, I
