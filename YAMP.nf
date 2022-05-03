@@ -1285,7 +1285,7 @@ process log {
 		do
 		if [[ \$got_head -eq 0 ]]; then
 			head -n 1 \${f} > profile_functions_data.txt
-			\$got_head=1
+			got_head=1
 		fi
 		sed '2q;d' \${f} >> profile_functions_data.txt
 

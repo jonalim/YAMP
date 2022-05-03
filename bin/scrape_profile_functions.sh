@@ -11,7 +11,7 @@ unaligned_reads_translated=$(grep "Unaligned reads after translated alignment:" 
 tot_gene_family=$(grep "Total gene families after translated alignment:" $2 | cut -d: -f 2 | sed 's/ //g')
 
 printf "\tinput\tspecies\texplain\taligned_nucleotide\tunaligned_nucleotide_percent\taligned_both\tunaligned_both\tgene_families\n"
-printf "$1\t${totR}\t${tot_species_prescreening}\t${selected_species_explain}\t${tot_reads_aligned_nucleotide}\t${unaligned_reads_nucleotide}\t${tot_reads_aligned_both}\t${unaligned_reads_translated}\t${tot_gene_family}\n"
+printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" $1 ${totR} ${tot_species_prescreening} ${selected_species_explain} ${tot_reads_aligned_nucleotide} ${unaligned_reads_nucleotide} ${tot_reads_aligned_both} ${unaligned_reads_translated} ${tot_gene_family}
 # # Dump to YAML (header)
 # echo "id: 'humann'"
 # echo "section_name: 'HUMAnN'" 
