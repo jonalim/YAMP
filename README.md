@@ -1,10 +1,10 @@
+MD Genomics Metagenomic Pipeline
+Copyright (C) 2022 Jonathan Lim.
+
 This repository was forked from https://github.com/alesssia/YAMP on November 9, 2021.
 
-## Citation
-
-Please cite YAMP as:
-
-> Visconti A., Martin T.C., and Falchi M., *"YAMP: a containerised workflow enabling reproducibility in metagenomics research"*, GigaScience (2018), [https://doi.org/10.1093/gigascience/giy072](https://doi.org/10.1093/gigascience/giy072)
+The program contained in this repository incorporates a modified version of Yet Another Metagenomic Pipeline (YAMP).
+Copyright (C) 2017-2021	Dr Alessia Visconti
 
 
 ## License
