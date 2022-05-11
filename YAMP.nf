@@ -92,7 +92,7 @@ but WITHOUT ANY WARRANTY. See the GNU GPL v3.0 for more details.
     --chocophlan          path    folder for the ChocoPhlAn database
     --uniref              path	  folder for the UniRef database
 
-YAMP supports FASTQ and compressed FASTQ files.
+MD Genomics Metagenomic Analysis Pipeline supports FASTQ and compressed FASTQ files.
 """
 }
 
@@ -308,8 +308,8 @@ def create_workflow_summary(summary) {
     yaml_file.text  = """
     id: 'workflow-summary'
     description: "This information is collected when the pipeline is started."
-    section_name: 'YAMP Workflow Summary'
-    section_href: 'https://github.com/alesssia/yamp'
+    section_name: 'Pipeline Workflow Summary'
+    section_href: 'https://github.com/jonalim/YAMP'
     plot_type: 'html'
     data: |
         <dl class=\"dl-horizontal\">

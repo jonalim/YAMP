@@ -4,7 +4,7 @@ from collections import OrderedDict
 import re
 
 regexes = {
-    'YAMP': ['v_pipeline.txt', r"(\S+)"],
+    'MD Genomics Metagenomic Analysis Pipeline': ['v_pipeline.txt', r"(\S+)"],
     'Nextflow': ['v_nextflow.txt', r"(\S+)"],
     'FastQC': ['v_fastqc.txt', r"(\S+)"],
     'BBmap': ['v_bbmap.txt', r"(\S+)"],
@@ -14,7 +14,7 @@ regexes = {
     'MultiQC': ['v_multiqc.txt', r"(\S+)"]
 }
 results = OrderedDict()
-results['YAMP'] = '<span style="color:#999999;\">N/A</span>'
+results['MD Genomics Metagenomic Analysis Pipeline'] = '<span style="color:#999999;\">N/A</span>'
 results['Nextflow'] = '<span style="color:#999999;\">N/A</span>'
 results['FastQC'] = '<span style="color:#999999;\">N/A</span>'
 results['BBmap'] = '<span style="color:#999999;\">N/A</span>'
@@ -34,8 +34,8 @@ for k, v in regexes.items():
 # Dump to YAML
 print ('''
 id: 'software-versions'
-section_name: 'YAMP Software Versions'
-section_href: 'https://github.com/alesssia/yamp'
+section_name: 'Pipeline Software Versions'
+section_href: 'https://github.com/jonalim/YAMP'
 plot_type: 'html'
 description: 'This information is collected at run time from the containers specification.'
 data: |
