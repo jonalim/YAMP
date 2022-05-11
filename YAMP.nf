@@ -1,7 +1,10 @@
 #!/usr/bin/env nextflow
 
 /**
-Yet Another Metagenomic Pipeline (YAMP)
+MD Genomics Metagenomic Analysis Pipeline
+Copyright (C) 2022 Jonathan Lim.
+
+This program incorporates a modified version of Yet Another Metagenomic Pipeline (YAMP).
 Copyright (C) 2017-2021	Dr Alessia Visconti
 
 This script is free software: you can redistribute it and/or modify
@@ -17,8 +20,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this script. If not, see <http://www.gnu.org/licenses/>.
 
-For any bugs or problems found, please go to:
-- https://github.com/alesssia/YAMP/issues
 */
 
 
@@ -26,7 +27,7 @@ def versionMessage()
 {
 	log.info"""
 
-	YET ANOTHER METAGENOMIC PIPELINE (YAMP) - Version: ${workflow.manifest.version}
+	MD Genomics Metagenomic Analysis Pipeline - Version: ${workflow.manifest.version}
 	""".stripIndent()
 }
 
@@ -34,14 +35,10 @@ def helpMessage()
 {
 	log.info"""
 
-YET ANOTHER METAGENOMIC PIPELINE (YAMP) - Version: ${workflow.manifest.version}
+MD Genomics Metagenomic Analysis Pipeline - Version: ${workflow.manifest.version}
 
 This pipeline is distributed in the hope that it will be useful
 but WITHOUT ANY WARRANTY. See the GNU GPL v3.0 for more details.
-
-Please report comments and bugs at https://github.com/alesssia/YAMP/issues.
-Check https://github.com/alesssia/YAMP for updates, and refer to
-https://github.com/alesssia/YAMP/wiki for more details.
 
   Usage:
   nextflow run YAMP.nf --reads1 R1 --reads2 R2 --prefix prefix --outdir path [options]
@@ -92,7 +89,7 @@ https://github.com/alesssia/YAMP/wiki for more details.
     --chocophlan          path    folder for the ChocoPhlAn database
     --uniref              path	  folder for the UniRef database
 
-YAMP supports FASTQ and compressed FASTQ files.
+MD Genomics Metagenomic Analysis Pipeline supports FASTQ and compressed FASTQ files.
 """
 }
 
@@ -161,7 +158,7 @@ if (params.mode != "characterisation" && ( (!params.singleEnd && (params.reads1 
 
 // Header log info
 log.info """---------------------------------------------
-YET ANOTHER METAGENOMIC PIPELINE (YAMP)
+MD Genomics Metagenomic Analysis Pipeline
 ---------------------------------------------
 
 Analysis introspection:
@@ -173,7 +170,7 @@ def summary = [:]
 summary['Starting time'] = new java.util.Date()
 //Environment
 summary['Environment'] = ""
-summary['Pipeline Name'] = 'YAMP'
+summary['Pipeline Name'] = 'MD Genomics Metagenomic Analysis Pipeline'
 summary['Pipeline Version'] = workflow.manifest.version
 
 summary['Config Profile'] = workflow.profile
@@ -316,8 +313,8 @@ def create_workflow_summary(summary) {
     yaml_file.text  = """
     id: 'workflow-summary'
     description: "This information is collected when the pipeline is started."
-    section_name: 'YAMP Workflow Summary'
-    section_href: 'https://github.com/alesssia/yamp'
+    section_name: 'Pipeline Workflow Summary'
+    section_href: 'https://github.com/jonalim/YAMP'
     plot_type: 'html'
     data: |
         <dl class=\"dl-horizontal\">
