@@ -114,10 +114,7 @@ custom_data:
           scale: "Blues"
           format: "{:,.0f}"
           placement: 1101
-  Humann:
-    plot_type: "generalstats"
-    pconfig:
-      - percExplained:
+      - perc_explained:
           title: "% Explained"
           description: "Percent of QCd microbiome explained by identified species"
           min: 0
@@ -125,46 +122,38 @@ custom_data:
           scale: "Greens"
           suffix: "%"
           placement: 1102
-      - tot_reads_aligned_nucleotide:
-          title: "Reads aligned by nucleotide search"
-          description: "Reads aligned by Bowtie nucleotide search"
-          min: 0
-          max: 100
-          scale: "Greens"
-          suffix: "%"
-          placement: 1103
-      - unaligned_reads_nucleotide:
-          title: "Unaligned by nucleotide search"
-          description: "Reads left unaligned by Bowtie nucleotide search"
-          min: 0
-          max: 100
-          scale: "Oranges"
-          suffix: "%"
-          placement: 1104
-          hidden: True
-      - tot_reads_aligned_both:
-          title: "Total reads aligned"
-          description: "Reads aligned by Bowtie nucleotide search or DIAMOND translated search"
-          min: 0
-          max: 100
-          scale: "Greens"
-          suffix: "%"
-          placement: 1105
-      - unaligned_reads_translated:
-          title: "Final unaligned reads"
-          description: "Reads aligned by neither Bowtie nucleotide search nor DIAMOND translated search"
-          min: 0
-          max: 100
-          scale: "Oranges"
-          suffix: "%"
-          placement: 1106
-      - geneFamilies:
+  Humann:
+    plot_type: "generalstats"
+    pconfig:
+      - gene_families:
           title: "G.Fam"
           description: "Total gene families"
           min: 0
           scale: "Blues"
           format: "{:,.0f}"
-          placement: 1107
+          placement: 1103
+      - perc_explained:
+          title: "% Explained"
+          description: "Percent of QCd microbiome explained by identified gene families"
+          min: 0
+          max: 100
+          scale: "Greens"
+          suffix: "%"
+          placement: 1104
+      - aligned_nucleotide:
+          title: "Reads aligned by nucleotide search"
+          description: "Reads aligned by Bowtie2 nucleotide search"
+          min: 0
+          max: 100
+          scale: "Greens"
+          placement: 1105
+      - aligned_translated:
+          title: "Reads aligned by translated search "
+          description: "Reads aligned by DIAMOND translated search"
+          min: 0
+          max: 100
+          scale: "Greens"
+          placement: 1106
 sp:
   Clumpify:
     fn: "dedup_data.txt"
@@ -188,7 +177,7 @@ table_columns_placement:
 table_columns_visible:
     'FastQC (Raw reads)': 
       avg_sequence_length: True
-      total_sequences: True
+      total_sequences: False
     'FastQC (QCd reads)': 
       avg_sequence_length: True
-      total_sequences: True
+      total_sequences: False

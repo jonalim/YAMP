@@ -3,14 +3,14 @@
 
 totR=$(gunzip < $3 | grep "^@" | wc -l)
 tot_species_prescreening=$(grep "Total species selected from prescreen:" $2 | cut -d: -f 2 | sed 's/ //g')
-selected_species_explain=$(grep "Selected species explain" $2 | cut -d" " -f 4- | sed "s/% of predicted community composition/% of QC'd reads/g" )
+selected_species_explain=$(grep "Selected species explain" $2 | cut -d" " -f 4 | grep -o "[0-9\.]*" )
 tot_reads_aligned_nucleotide=$(grep -zo "Total bugs from nucleotide alignment.*Total gene families from nucleotide alignment" $2 | grep -Eoa "[0-9]+ hits" | grep -Eo "[0-9]+" | paste -sd+ | bc | sed 's/ //g')
-unaligned_reads_nucleotide=$(grep "Unaligned reads after nucleotide alignment:" $2 | cut -d: -f 2 | sed 's/ //g')
+unaligned_reads_nucleotide=$(grep -o "Unaligned reads after nucleotide alignment: [0-9\.]*" $2 | grep -o "[0-9\.]*")
 tot_reads_aligned_both=$(grep -zo "Total bugs after translated alignment.*Total gene families after translated alignment" $2 | grep -Eoa "[0-9]+ hits" | grep -Eo "[0-9]+" | paste -sd+ | bc | sed 's/ //g')
-unaligned_reads_translated=$(grep "Unaligned reads after translated alignment:" $2 | cut -d: -f 2 | sed 's/ //g')
+unaligned_reads_translated=$(grep "Unaligned reads after translated alignment:" $2 | grep -o "[0-9\.]*")
 tot_gene_family=$(grep "Total gene families after translated alignment:" $2 | cut -d: -f 2 | sed 's/ //g')
 
-printf "\tinput\tspecies\texplain\taligned_nucleotide\tunaligned_nucleotide_percent\taligned_both\tunaligned_both\tgene_families\n"
+printf "\tinput\tspecies\tperc_explained\taligned_nucleotide\tunaligned_nucleotide_percent\taligned_both\tunaligned_both_percent\tgene_families\n"
 printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" $1 ${totR} ${tot_species_prescreening} ${selected_species_explain} ${tot_reads_aligned_nucleotide} ${unaligned_reads_nucleotide} ${tot_reads_aligned_both} ${unaligned_reads_translated} ${tot_gene_family}
 # # Dump to YAML (header)
 # echo "id: 'humann'"
