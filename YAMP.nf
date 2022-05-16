@@ -911,19 +911,22 @@ process profile_taxa {
 	"""
 }
 
+if (params.skip_profile_taxa) {
+	Channel.fromPath("${params.indir}/*/ANALYSIS/*_metaphlan_bugs_list.tsv")
+		.set { to_collect_taxonomic_profiles }
+}
+
 process collect_taxonomic_profiles {
 	label 'biobakery'
 
 	publishDir "${params.outdir}", mode: 'link', pattern: "merged_metaphlan_abundance_table.txt", overwrite: true
+	publishDir "${params.outdir}", mode: 'link', pattern: "merged_metaphlan_abundance_table.species.txt", overwrite: true
 
 	input:
 	file '*' from to_collect_taxonomic_profiles.collect()
 
 	output:
 	tuple file('merged_metaphlan_abundance_table.txt'), file('merged_metaphlan_abundance_table.species.txt') into to_hclust_taxonomic_profiles
-
-	when:
-	!params.skip_profile_taxa || !params.skip_profile_function
 
 	script:
 	"""
@@ -948,9 +951,6 @@ process hclust_taxonomic_profiles {
 
 	output:
 	path '*.png'
-
-	when:
-	!params.skip_profile_taxa || !params.skip_profile_function
 
 	script:
 	"""
@@ -1037,6 +1037,16 @@ process profile_function {
  	"""
 }
 
+
+if (params.skip_profile_function) {
+	Channel.fromPath("${params.indir}/*/ANALYSIS/*_genefamilies.tsv")
+		.set { humann_gene_families }
+	Channel.fromPath("${params.indir}/*/ANALYSIS/*_pathcoverage.tsv")
+		.set { humann_path_coverage }
+	Channel.fromPath("${params.indir}/*/ANALYSIS/*_pathabundance.tsv")
+		.set { humann_path_abundance }
+}
+
 process collect_functional_profiles {
 	label 'biobakery'
 
@@ -1060,9 +1070,6 @@ process collect_functional_profiles {
 	path('all_genefamilies-relab.tsv') into gene_fams_to_hclust
 	path('all_pathabundance.tsv') into pathabunds_to_hclust
 	path('all_pathcoverage.tsv') into pathcovs_to_hclust
-
-	when:
-	!params.skip_profile_taxa || !params.skip_profile_function
 
 	script:
 	"""
@@ -1088,9 +1095,6 @@ process hclust_functional_profiles {
 
 	output:
 	path '*.png'
-
-	when:
-	!params.skip_profile_taxa || !params.skip_profile_function
 
 	script:
 	"""
@@ -1148,7 +1152,7 @@ process alpha_diversity {
 	file "${name}_alpha-diversity.tsv" into alpha_diversity_log
 
 	when:
-	!params.skip_profile_taxa || !params.skip_profile_function
+	!params.skip_profile_taxa
 
 	script:
 	"""
@@ -1189,7 +1193,6 @@ process alpha_diversity {
 if(params.skip_preprocess) {
 	Channel.fromPath("${params.indir}/*/ANALYSIS/01_dedup_log.txt")
 		.set { dedup_log }
-		
 	Channel.fromPath("${params.indir}/*/ANALYSIS/02_syndecontam_log.txt")
 		.set { synthetic_contaminants_log }
 	Channel.fromPath("${params.indir}/*/ANALYSIS/03_trim_log.txt")
