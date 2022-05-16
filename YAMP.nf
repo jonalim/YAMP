@@ -1294,7 +1294,7 @@ process log {
 		samplename=\${filename%.\$ext}
 		tot_species_prescreening=\$(grep "Total species selected from prescreen:" "\${f}" | cut -d: -f 2 | sed 's/ //g')
 		selected_species_explain=\$(grep "Selected species explain" "\${f}" | cut -d" " -f 4 | grep -o "[0-9\\.]*")
-		printf "%s\\t%s\\t%s" \$samplename \${tot_species_prescreening} \${selected_species_explain} >> profile_taxa_data.txt
+		printf "%s\\t%s\\t%s\\n" \$samplename \${tot_species_prescreening} \${selected_species_explain} >> profile_taxa_data.txt
 	done
 
 	printf "\\taligned_nucleotide\\tunaligned_nucleotide_percent\\t" > profile_functions_data.txt
