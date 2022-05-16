@@ -144,14 +144,12 @@ custom_data:
           title: "Reads aligned by nucleotide search"
           description: "Reads aligned by Bowtie2 nucleotide search"
           min: 0
-          max: 100
           scale: "Greens"
           placement: 1105
       - aligned_translated:
           title: "Reads aligned by translated search "
           description: "Reads aligned by DIAMOND translated search"
           min: 0
-          max: 100
           scale: "Greens"
           placement: 1106
 sp:
