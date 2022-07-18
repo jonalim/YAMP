@@ -66,23 +66,19 @@ but WITHOUT ANY WARRANTY. See the GNU GPL v3.0 for more details.
 						Phix174ill:  /local/projects/drasko/thazen/scripts/phiX174.fas
 
   Other options:
-  BBduk parameters for removing synthetic contaminants and trimming:
+  Parameters for removing synthetic contaminants:
     --qin                 <33|64> Input quality offset
-    --kcontaminants       value   kmer length used for identifying contaminants
-    --phred               value   regions with average quality BELOW this will be trimmed
-    --minlength           value   reads shorter than this after trimming will be discarded
-    --mink                value   shorter kmer at read tips to look for
-    --hdist               value   maximum Hamming distance for ref kmer
     --artefacts           path    FASTA file with artefacts
     --phix174ill          path    FASTA file with phix174_ill
+  
+  Parameters for adapter/quality trimming:
+    --phred               value   regions with average quality BELOW this will be trimmed
+    --minlength           value   reads shorter than this after trimming will be discarded
     --adapters            path    FASTA file with adapters
 
-  BBwrap parameters for decontamination:
+  Parameters for decontamination:
     --foreign_genome      path    FASTA file for contaminant (pan)genome
     --foreign_genome_ref  path    folder for for contaminant (pan)genome (pre indexed)
-    --mind                value   approximate minimum alignment identity to look for
-    --maxindel            value   longest indel to look for
-    --bwr                 value   restrict alignment band to this
 
   MetaPhlAn parameters for taxa profiling:
     --metaphlan_databases path    folder for the MetaPhlAn database
@@ -185,13 +181,10 @@ if(workflow.containerEngine) summary['Container'] = workflow.container
 if (!params.skip_preprocess)
 {
 	if (workflow.containerEngine == 'singularity') {
-	   	summary['BBmap'] = "https://depot.galaxyproject.org/singularity/bbmap:38.87--h1296035_0"
 		summary['FastQC'] = "https://depot.galaxyproject.org/singularity/fastqc:0.11.9--0"
 	} else if (workflow.containerEngine == 'docker') {
-    	summary['BBmap'] = "quay.io/biocontainers/bbmap:38.87--h1296035_0"
 		summary['FastQC'] = "quay.io/biocontainers/fastqc:0.11.9--0"
 	} else {
-		summary['BBmap'] = "No container information"
 		summary['FastQC'] = "No container information"
 	}
 }
@@ -236,32 +229,27 @@ if (!params.skip_preprocess)
 	// 	summary['QC mate pairs separately'] = params.qc_matepairs
 	// }
 	summary['Performing de-duplication'] = params.dedup
+	summary['Input quality offset'] = params.qin == 33 ? 'ASCII+33' : 'ASCII+64'
 
 	//remove_synthetic_contaminants
-	summary['Synthetic contaminants:'] = ""
+	summary['Synthetic contaminant removal:'] = ""
 	summary['Artefacts'] = params.artefacts
 	summary['Phix174ill'] = params.phix174ill
+	summary['K-mer size'] = "31"
 
 	//Trimming
+	summary['Adapter/quality trimming:'] = ""
 	summary['Adapters'] = params.adapters
-	summary['Trimming parameters:'] = ""
-	summary['Input quality offset'] = params.qin == 33 ? 'ASCII+33' : 'ASCII+64'
-	summary['Min phred score'] = params.phred
-	summary['Min length'] = params.minlength
-	summary['kmer lenght'] = params.kcontaminants
-	summary['Shorter kmer'] = params.mink
-	summary['Max Hamming distance'] = params.hdist
+	summary['Additional Trimmomatic parameters:'] = "ILLUMINACLIP:<adapters>:2:30:10:8:True SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength"
 
 	//Decontamination
-	summary['Decontamination parameters:'] = ""
+	summary['Host decontamination:'] = ""
 	if (params.foreign_genome_ref != "") {
 		summary['Contaminant (pan)genome'] = params.foreign_genome_ref + " (indexed)"
 	} else if (	params.foreign_genome_ref == "") {
 		summary['Contaminant (pan)genome'] = params.foreign_genome
 	}
-	summary['Min alignment identity'] = params.mind
-	summary['Max indel length'] = params.maxindel
-	summary['Max alignment band'] = params.bwr
+	summary['Decontamination parameters'] = "Kneaddata defaults"
 }
 
 if (!params.skip_profile_taxa || !params.skip_profile_function)
@@ -367,48 +355,49 @@ process get_software_versions {
 
 
 // Defines channels for foreign_genome file
-foreign_genome = file( "${params.foreign_genome}", type: "file", checkIfExists: true )
 
-//Stage boilerplate log when the contaminant (pan)genome is indexed
-if (!params.skip_preprocess && params.foreign_genome_ref == "") {
-	index_foreign_genome_log = Channel.from(file("$baseDir/assets/foreign_genome_indexing_mqc.yaml"))
-} else {
-	index_foreign_genome_log = Channel.empty()
+index_foreign_genome_log = Channel.empty()
+foreign_genome = Channel.empty()
+if (!params.skip_preprocess) {
+	if (params.foreign_genome_ref == "") {
+		//Stage boilerplate log when the contaminant (pan)genome is indexed
+		index_foreign_genome_log = Channel.from(file("$baseDir/assets/foreign_genome_indexing_mqc.yaml"))
+		foreign_genome = file( "${params.foreign_genome}", type: "file", checkIfExists: true )
+	} else {
+		//When the indexed contaminant (pan)genome is already available, its path should be pushed in 
+		// the correct channel
+		ref_foreign_genome = file(params.foreign_genome_ref, checkIfExists: true )
+	}
 }
 
-process index_foreign_genome {
+// process index_foreign_genome {
 
-	//Enable multicontainer settings
-    if (workflow.containerEngine == 'singularity') {
-        container params.singularity_container_bbmap
-    } else {
-        container params.docker_container_bbmap
-    }
+// 	//Enable multicontainer settings
+//     if (workflow.containerEngine == 'singularity') {
+//         container params.singularity_container_bbmap
+//     } else {
+//         container params.docker_container_bbmap
+//     }
 
-	input:
-	file(foreign_genome) from foreign_genome
+// 	input:
+// 	file(foreign_genome) from foreign_genome
 
-	output:
-	path("ref/", type: 'dir') into ref_foreign_genome
+// 	output:
+// 	path("ref/", type: 'dir') into ref_foreign_genome
 
-	when:
-	!params.skip_preprocess && params.foreign_genome_ref == ""
+// 	when:
+// 	!params.skip_preprocess && params.foreign_genome_ref == ""
 
-	script:
-	"""
-	#Sets the maximum memory to the value requested in the config file
-	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
-	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') ))G\"
+// 	script:
+// 	"""
+// 	#Sets the maximum memory to the value requested in the config file
+// 	#maxmem=\$(echo ${task.memory} | sed 's/ //g' | sed 's/B//g')
+// 	maxmem=\"\$((\$(echo ${task.memory} | sed 's/ GB//g') ))G\"
 
-	# This step will have a boilerplate log because the information saved by bbmap are not relevant
-	bbmap.sh -Xmx\"\$maxmem\" ref=$foreign_genome &> foreign_genome_index_mqc.txt
-	"""
-}
-
-//When the indexed contaminant (pan)genome is already available, its path should be pushed in the correct channel
-if (params.foreign_genome_ref != "") {
-	ref_foreign_genome = file(params.foreign_genome_ref, checkIfExists: true )
-}
+// 	# This step will have a boilerplate log because the information saved by bbmap are not relevant
+// 	bbmap.sh -Xmx\"\$maxmem\" ref=$foreign_genome &> foreign_genome_index_mqc.txt
+// 	"""
+// }
 
 /**
 	Creates a set of channels for input read files.
@@ -464,12 +453,14 @@ process preprocess {
 	tuple val(name), path("${name}.fq.gz") into read_files_fastqc, read_files_log
 	file "01_dedup_log.txt" into dedup_log
 	file "02_syndecontam_log.txt" into synthetic_contaminants_log
-	file "03_trim_log.txt" into trimming_log
+	file "03_trim+decontam_log.txt" into trimming_log
 	tuple val(name), path("decontam/*.QCd.fq.gz") into qcd_reads
 	tuple val(name), path("decontam/*.QCd.fq.gz") into to_profile_taxa_decontaminated
-	file "04_decontam_log.txt" into decontaminate_log
 
 	// parameters params.singleEnd, params.qc_matepairs, params.dedup, params.mode come into effect here
+
+	when:
+	!params.skip_preprocess
 
 	script:
 	// myList = [1776, -1, 33, 99, 0, 928734928763]
@@ -516,11 +507,26 @@ process preprocess {
 	#bash scrape_remove_synthetic_contaminants_log.sh > syndecontam/${name}.yaml
 
 	# trim
-	bbduk.sh -Xmx\"\$maxmem\" in=\"${name}.no_synthetic_contaminants.fq.gz\" \\
-		out=\"${name}.trimmed.fq.gz\" ktrim=r k=$params.kcontaminants mink=$params.mink \\
-		hdist=$params.hdist qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters \\
-		qin=$params.qin ordered=t threads=${task.cpus} tbo tpe ow &> 03_trim_log.txt
+	kneaddata -i \"${name}.no_synthetic_contaminants.fq.gz\" \\
+    	-o decontam/ \\
+    	-db $ref_foreign_genome \\
+    	--max-memory \"\$maxmem\" --trimmomatic-options="ILLUMINACLIP:$adapters:2:30:10:8:True SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength" \\
+		--log 03_trim+decontam_log.txt
 	rm \"${name}.no_synthetic_contaminants.fq.gz\"
+	gzip \"decontam/${name}.no_synthetic_contaminants_kneaddata.fastq\" --stdout \\
+		> \"decontam/${name}.QCd.fq.gz\"
+	rm \"decontam/${name}.no_synthetic_contaminants_kneaddata.fastq\"
+	foreign_genome_fn=\$( basename $ref_foreign_genome/*.rev.1.bt2 )
+    foreign_name=\${foreign_genome_fn%.rev.1.bt2}
+	gzip \"decontam/${name}.no_synthetic_contaminants_kneaddata_\${foreign_name}_bowtie2_contam.fastq\" \\
+		--stdout > \"decontam/${name}.contamination.fq.gz\"
+	rm \"decontam/${name}.no_synthetic_contaminants_kneaddata_\${foreign_name}_bowtie2_contam.fastq\"
+
+	#bbduk.sh -Xmx\"\$maxmem\" in=\"${name}.no_synthetic_contaminants.fq.gz\" \\
+	#	out=\"${name}.trimmed.fq.gz\" ktrim=r k=$params.kcontaminants mink=$params.mink \\
+	#	hdist=$params.hdist qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters \\
+	#	qin=$params.qin ordered=t threads=${task.cpus} tbo tpe ow &> 03_trim+decontam_log.txt
+	#rm \"${name}.no_synthetic_contaminants.fq.gz\"
 	# rm \"${name}_no_synthetic_contaminants_R2.fq.gz\"
 
 	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
@@ -529,14 +535,14 @@ process preprocess {
 	#bash scrape_trimming_log.sh > trim/${name}.yaml
 
 	# decontaminate
-	mkdir decontam
+	# mkdir decontam
 
-	bbwrap.sh -Xmx\"\$maxmem\" mapper=bbmap append=t in=\"${name}.trimmed.fq.gz\" \\
-		outu=\"decontam/${name}.QCd.fq.gz\" outm=\"decontam/${name}.contamination.fq.gz\" \\
-		minid=$params.mind maxindel=$params.maxindel bwr=$params.bwr bw=12 minhits=2 qtrim=rl \\
-		trimq=$params.phred path="./" qin=$params.qin threads=${task.cpus} untrim quickmatch fast \\
-		ordered=t ow &> 04_decontam_log.txt
-	rm \"${name}.trimmed.fq.gz\"
+	#bbwrap.sh -Xmx\"\$maxmem\" mapper=bbmap append=t in=\"${name}.trimmed.fq.gz\" \\
+	#	outu=\"decontam/${name}.QCd.fq.gz\" outm=\"decontam/${name}.contamination.fq.gz\" \\
+	#	minid=$params.mind maxindel=$params.maxindel bwr=$params.bwr bw=12 minhits=2 qtrim=rl \\
+	#	trimq=$params.phred path="./" qin=$params.qin threads=${task.cpus} untrim quickmatch fast \\
+	#	ordered=t ow &> 04_decontam_log.txt
+	rm \"decontam/${name}.no_synthetic_contaminants_kneaddata.trimmed.fastq\"
 	#rm \"${name}_trimmed_singletons.fq.gz\"
 	# rm \"${name}_trimmed_R2.fq.gz\"
 
@@ -880,7 +886,7 @@ process profile_taxa {
     }
 
 	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "*.{biom,tsv}", overwrite: true
-	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "${name}_metaphlan_bugs_list.tsv", overwrite: true
+	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "${name}.metaphlan_bugs_list.tsv", overwrite: true
 
 	input:
 	tuple val(name), file(reads) from to_profile_taxa_decontaminated.mix(to_profile_taxa_merged).mix(reads_profile_taxa)
@@ -888,9 +894,9 @@ process profile_taxa {
 
 	output:
 	tuple val(name), path("*.biom") into to_alpha_diversity
-	file("*_metaphlan_bugs_list.tsv") into to_collect_taxonomic_profiles
-	tuple val(name), path(reads), path("*_metaphlan_bugs_list.tsv") into to_profile_function
-	path "${name}_metaphlan_bugs_list.tsv" into profile_taxa_log
+	file("*.metaphlan_bugs_list.tsv") into to_collect_taxonomic_profiles
+	tuple val(name), path(reads), path("*.metaphlan_bugs_list.tsv") into to_profile_function
+	path "${name}.metaphlan_bugs_list.tsv" into profile_taxa_log
 
 	when:
 	!params.skip_profile_taxa || !params.skip_profile_function
@@ -903,16 +909,16 @@ process profile_taxa {
 
 	metaphlan --input_type fastq --tmp_dir=. --biom ${name}.biom --bowtie2out=${name}_bt2out.txt \\
 		--bowtie2db $bowtie2db --bt2_ps ${params.bt2options} --add_viruses --sample_id ${name} \\
-		--nproc ${task.cpus} $reads ${name}_metaphlan_bugs_list.tsv &> profile_taxa_mqc.txt
+		--nproc ${task.cpus} $reads ${name}.metaphlan_bugs_list.tsv &> profile_taxa_mqc.txt
 
 	# MultiQC doesn't have a module for Metaphlan yet. As a consequence, I
 	# had to create a YAML file with all the info I need via a bash script
-	bash scrape_profile_taxa_log.sh ${name}_metaphlan_bugs_list.tsv > ${name}.yaml
+	bash scrape_profile_taxa_log.sh ${name}.metaphlan_bugs_list.tsv > ${name}.yaml
 	"""
 }
 
 if (params.skip_profile_taxa) {
-	Channel.fromPath("${params.indir}/*/ANALYSIS/*_metaphlan_bugs_list.tsv")
+	Channel.fromPath("${params.indir}/*/ANALYSIS/*.metaphlan_bugs_list.tsv")
 		.set { to_collect_taxonomic_profiles }
 }
 
@@ -931,8 +937,8 @@ process collect_taxonomic_profiles {
 	script:
 	"""
 	# merge_metaphlan_tables.py will put the whole filename (without .tsv) as column names
-	for i in *_metaphlan_bugs_list.tsv; do
-		mv \$i \${i/_metaphlan_bugs_list/}
+	for i in *.metaphlan_bugs_list.tsv; do
+		mv \$i \${i/.metaphlan_bugs_list/}
 	done
 
 	merge_metaphlan_tables.py *.tsv > merged_metaphlan_abundance_table.txt
@@ -957,14 +963,14 @@ process hclust_taxonomic_profiles {
 	#sed -i 's/\\t/ /g' ${table_stratified}
 
 	hclust2.py -i ${table_stratified} -o metaphlan.top50.hclust2.png --skip_rows 0 \\
-		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s --fperc 99 \\
+		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s \\
 		--flabel_size 4 --legend_file metaphlan.hclust2.legend.png --max_flabel_len 100 \\
 		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete --no_fclustering
 
 	# sed -i 's/\\t/ /g' ${table_species}
 
 	hclust2.py -i ${table_species} -o metaphlan.species.top50.hclust2.png --skip_rows 0 \\
-		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s --fperc 99 \\
+		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s \\
 		--flabel_size 4 --legend_file metaphlan.species.hclust2.legend.png --max_flabel_len 100 \\
 		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete --no_fclustering
 	"""
@@ -1050,8 +1056,8 @@ if (params.skip_profile_function) {
 process collect_functional_profiles {
 	label 'biobakery'
 
-	publishDir "${params.outdir}", mode: 'link', overwrite: true
-	// "{all_genefamilies.tsv,all_pathcoverage.tsv,all_pathabundance.tsv,all_genefamilies-cpm.tsv,all_pathcoverage-cpm.tsv,all_pathabundance-cpm.tsv}"
+	publishDir "${params.outdir}", mode: 'link', overwrite: true,
+		pattern: "{all_genefamilies*.tsv,all_pathcoverage*.tsv,all_pathabundance*.tsv}"
 
 	//Enable multicontainer settings
     if (workflow.containerEngine == 'singularity') {
@@ -1068,14 +1074,24 @@ process collect_functional_profiles {
 	output:
 	path('*.tsv') into collected_functional_profiles
 	path('all_genefamilies-relab.tsv') into gene_fams_to_hclust
-	path('all_pathabundance.tsv') into pathabunds_to_hclust
-	path('all_pathcoverage.tsv') into pathcovs_to_hclust
+	path('all_pathabundance_unstratified.no-unintegrated.tsv') into pathabunds_to_hclust
+	path('all_pathcoverage_unstratified.tsv') into pathcovs_to_hclust
 
 	script:
 	"""
 	humann_join_tables -i ./ -o all_genefamilies.tsv --file_name genefamilies
-	humann_join_tables -i ./ -o all_pathcoverage.tsv --file_name pathcoverage
+	humann_join_tables -i ./ -o all_pathcoverage.temp.tsv --file_name pathcoverage
 	humann_join_tables -i ./ -o all_pathabundance.tsv --file_name pathabundance
+
+	# UNMAPPED and UNINTEGRATED coverage values are meaningless
+	grep -vP "(?:^UNMAPPED)|(?:^UNINTEGRATED)" all_pathcoverage.temp.tsv > all_pathcoverage.tsv
+	rm -f all_pathcoverage.temp.tsv
+	
+	humann_split_stratified_table --input all_genefamilies.tsv --output ./
+	humann_split_stratified_table --input all_pathabundance.tsv --output ./
+	humann_split_stratified_table --input all_pathcoverage.tsv --output ./
+
+	grep -vP "(?:^UNMAPPED)|(?:^UNINTEGRATED)" all_pathabundance_unstratified.tsv > all_pathabundance_unstratified.no-unintegrated.tsv
 
 	humann_renorm_table -i all_genefamilies.tsv -o all_genefamilies-copm.tsv --units cpm
 	humann_renorm_table -i all_genefamilies.tsv -o all_genefamilies-relab.tsv --units relab
@@ -1098,10 +1114,6 @@ process hclust_functional_profiles {
 
 	script:
 	"""
-	# sed -i 's/\\t/ /g' ${gene_fam_table}
-	# sed -i 's/\\t/ /g' ${path_abund_table}
-	# sed -i 's/\\t/ /g' ${path_cov_table}
-
 	if [[ \$(awk '{print NF}' ${gene_fam_table} | head -n 2 | tail -n 1) -gt 3 ]]; then
 		cluster_columns=""
 	else
@@ -1109,20 +1121,21 @@ process hclust_functional_profiles {
 	fi
 
 	hclust2.py -i ${gene_fam_table} -o all_genefamilies.top50.hclust2.png --skip_rows 0 \\
-		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s --fperc 99 \\
+		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s \\
 		--flabel_size 4 --legend_file all_genefamilies.top50.legend.png --max_flabel_len 100 \\
 		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete \$cluster_columns
 
-	hclust2.py -i ${path_cov_table} -o all_pathcoverage.top50.hclust2.png --skip_rows 0 \\
-		--ftop 50 --f_dist_f cosine --s_dist_f cityblock --cell_aspect_ratio 9 -s --fperc 99 \\
+	hclust2.py -i ${path_cov_table} -o all_pathcoverage_unstratified.top50.hclust2.png \\
+		 --skip_rows 0 --ftop 50 --f_dist_f cosine --s_dist_f cityblock --cell_aspect_ratio 9 -s \\
 		--flabel_size 4 --legend_file all_pathcoverage.top50.legend.png --max_flabel_len 100 \\
-		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete \$cluster_columns
+		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete \\
+		--no_fclustering \$cluster_columns
 
-	hclust2.py -i ${path_abund_table} -o all_pathabundance.top50.hclust2.png \\
-		--skip_rows 0 --ftop 50 --f_dist_f cosine --s_dist_f canberra --cell_aspect_ratio 9 -s \\
-		--fperc 99 --flabel_size 4 --legend_file all_pathabundance.top50.legend.png \\
-		--max_flabel_len 100 --metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 \\
-		--slinkage complete \$cluster_columns
+	hclust2.py -i ${path_abund_table} \\
+		-o all_pathabundance_unstratified.no-unintegrated.top50.hclust2.png --skip_rows 0 --ftop 50 \\
+		--f_dist_f cosine --s_dist_f canberra --cell_aspect_ratio 9 -s --flabel_size 4 \\
+		--legend_file all_pathabundance.top50.legend.png --max_flabel_len 100 --metadata_height 0.075 \\
+		--minv 0.01 --no_slabels --dpi 300 --slinkage complete \$cluster_columns
 	"""
 }
 
@@ -1149,7 +1162,7 @@ process alpha_diversity {
 	tuple val(name), file(metaphlan_bug_list) from to_alpha_diversity
 
     output:
-	file "${name}_alpha-diversity.tsv" into alpha_diversity_log
+	file "${name}.alpha-diversity.tsv" into alpha_diversity_log
 
 	when:
 	!params.skip_profile_taxa
@@ -1160,21 +1173,21 @@ process alpha_diversity {
 	n=\$(grep -o s__ $metaphlan_bug_list | wc -l  | cut -d\" \" -f 1)
 	if (( n <= 3 )); then
 		#The file should be created in order to be returned
-		touch ${name}_alpha-diversity.tsv
+		touch ${name}.alpha-diversity.tsv
 	else
-		echo $name > ${name}_alpha-diversity.tsv
+		echo $name > ${name}.alpha-diversity.tsv
 		qiime tools import --input-path $metaphlan_bug_list --type 'FeatureTable[Frequency]' --input-format BIOMV100Format --output-path ${name}_abundance_table.qza
-		for alpha in ace berger_parker_d brillouin_d chao1 chao1_ci dominance doubles enspie esty_ci fisher_alpha gini_index goods_coverage heip_e kempton_taylor_q lladser_pe margalef mcintosh_d mcintosh_e menhinick michaelis_menten_fit osd pielou_e robbins shannon simpson simpson_e singles strong
+		for alpha in berger_parker_d brillouin_d dominance enspie esty_ci fisher_alpha gini_index goods_coverage heip_e kempton_taylor_q lladser_pe margalef mcintosh_d mcintosh_e menhinick michaelis_menten_fit observed_features osd pielou_e robbins shannon simpson simpson_e singles strong
 		do
 			qiime diversity alpha --i-table ${name}_abundance_table.qza --p-metric \$alpha --output-dir \$alpha &> /dev/null
-			qiime tools export --input-path \$alpha/alpha_diversity.qza --output-path \${alpha} &> /dev/null
+			qiime tools export --input-path \$alpha/alpha_diversity.qza --output-path \${alpha}
 			if [[ -e "\${alpha}/alpha-diversity.tsv" ]]; then
                 value=\$(sed -n '2p' \${alpha}/alpha-diversity.tsv | cut -f 2)
             else
                 value="#N/A"
             fi
 		    echo -e  \$alpha'\t'\$value
-		done >> ${name}_alpha-diversity.tsv
+		done >> ${name}.alpha-diversity.tsv
 	fi
 	"""
 }
@@ -1195,7 +1208,7 @@ if(params.skip_preprocess) {
 		.set { dedup_log }
 	Channel.fromPath("${params.indir}/*/ANALYSIS/02_syndecontam_log.txt")
 		.set { synthetic_contaminants_log }
-	Channel.fromPath("${params.indir}/*/ANALYSIS/03_trim_log.txt")
+	Channel.fromPath("${params.indir}/*/ANALYSIS/03_trim+decontam_log.txt")
 		.set { trimming_log }
 }
 if(params.skip_quality_assessment) {
@@ -1206,12 +1219,18 @@ if(params.skip_quality_assessment) {
 		.set { fastqc_qcd_log }
 }
 if(params.skip_profile_taxa) {
-	Channel.fromPath("${params.indir}/*/ANALYSIS/*_metaphlan_bugs_list.tsv")
+	Channel.fromPath("${params.indir}/*/ANALYSIS/*.metaphlan_bugs_list.tsv")
 		.set { profile_taxa_log }
-	Channel.fromPath("${params.indir}/*/ANALYSIS/*_alpha-diversity.tsv")
+	Channel.fromPath("${params.indir}/*/ANALYSIS/*.alpha-diversity.tsv")
 		.set {alpha_diversity_log}
 	Channel.fromPath("${params.indir}/*/ANALYSIS/*.HUMAnN.log")
 		.set { profile_functions_log }
+}
+// Report data from a previous execution, to be merged with current report data
+multiqc_data_prev = Channel.empty()
+if(params.resume_multiqc) {
+    Channel.fromPath("${params.indir}/multiqc_data/")
+        .set { multiqc_data_prev }
 }
 
 process log {
@@ -1240,6 +1259,7 @@ process log {
 		//atm we do nothing with the qiime output
 	path "qiime/*" from alpha_diversity_log.collect().ifEmpty([])
 	file "humann/*" from profile_functions_log.collect().ifEmpty([])
+    path "multiqc_data_prev/" from multiqc_data_prev.collect().ifEmpty([])
 
 	output:
 	path "*multiqc_report*.html"
@@ -1256,14 +1276,14 @@ process log {
 		percentage=\$(echo \$survivedR \$totR | awk '{print \$1/\$2*100}' )
 		percentage=`printf "%.2f" \$percentage`
 		time=\$(grep "Total time:" "\${f}" | cut -d: -f 2 | cut -f 2 | sed 's/s\\./s/g')
-		samplename=\$(head -n 1 "\${f}" | grep -o "\\sin=[^\\S\\.]*" | sed 's/[[:blank:]]in=//' )
+		samplename=\$(head -n 1 "\${f}" | grep -oP "\\sin=[^\\s\\.]*" | sed 's/[[:blank:]]in=//' )
 		printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "\${samplename}" "\${totR}" "\${remR}" "\${survivedR}" "\${time}" >> dedup_data.txt
 	done
 
 	printf "\\tsynDecontam\\ttrimmed\\n" > bbduk_data.txt
 	for f in syncontam/log*.txt
 	 	do
-		samplename=\$(head -n 1 \${f} | grep -o "\\sin=[^\\S\\.]*" | sed 's/[[:blank:]]in=//' )
+		samplename=\$(head -n 1 \${f} | grep -oP "\\sin=[^\\s\\.]*" | sed 's/[[:blank:]]in=//' )
 		totR=\$(grep "Input:" \${f} | cut -d: -f 2 | cut -f 2 | cut -d" " -f 1 | sed 's/ //g')
 		remR=\$(grep "Contaminants:" \${f} | cut -d: -f 2 | cut -f 2 | cut -d" " -f 1 | sed 's/ //g')
 		reads=\$((\$totR-\$remR))
@@ -1272,50 +1292,79 @@ process log {
 
 	for f in trimming/log*.txt
 	 	do
-		samplename=\$(head -n 1 \${f} | grep -o "\\sin=[^\\S\\.]*" | sed 's/[[:blank:]]in=//' )
-		totR=\$(grep "Input:" \${f} | cut -d: -f 2 | cut -f 2 | cut -d" " -f 1 | sed 's/ //g')
-		remR=\$(grep "Total Removed:" \${f} | cut -d: -f 2 | cut -f 2 | cut -d" " -f 1 | sed 's/ //g')
+		samplename=\$(grep -oP "^input = [^\\s\\.]*" \${f} | sed -E 's/.*\\///' )
+		totR=\$(grep -oP "TrimmomaticSE: Started with arguments:.*Input Reads: [0-9]*" \${f} | grep -oP "[0-9]*\$" )
+		remR=\$(grep -oP "TrimmomaticSE: Started with arguments:.*Dropped: [0-9]*" \${f} | grep -oP "[0-9]*\$" )
 		reads=\$((\$totR-\$remR))
-	 	sedstr="s/(\${samplename}.*)\$/\\1\\t\${reads}/"
+	 	sedstr="s/(\${samplename}\\t.*)\$/\\1\\t\${reads}/"
 	 	sed -i -E "\${sedstr}" bbduk_data.txt
 	done
 
-	printf "\\tdecontam\\n" > decontam_data.txt
+	printf "\\thost\\tqcd\\n" > decontam_data.txt
 	for f in fastqc_QCd/*.html
 		do
 		reads=\$(grep -o "<tr><td>Total Sequences</td><td>[0-9]*</td></tr>" "\${f}" | grep -o "[0-9]*")
 		filename=\${f##*/}
 		samplename=\${filename%_fastqc.html}
-		printf "%s\\t%s\\n" "\${samplename}" "\${reads}" >> decontam_data.txt
+		nInput=\$(grep -E "\$samplename\\W" bbduk_data.txt | sed -E 's/^\\w*\\t\\w*\\t([0-9]*).*\$/\\1/')
+		nRemoved=\$((\$nInput-\$reads))
+		printf "%s\\t%s\\t%s\\n" "\${samplename}" "\${nRemoved}" "\${reads}" >> decontam_data.txt
 	done
 
-	printf "\\tnSpecies\\tperc_explained\\n" > profile_taxa_data.txt
+	printf "\\tnSpecies\\n" > profile_taxa_data.txt
+	for f in metaphlan/*.metaphlan_bugs_list.tsv
+		do
+		filename=\${f##*/}
+		samplename=\${filename%.metaphlan_bugs_list.tsv}
+		tot_species=\$(grep "s__" "\$f" | wc -l)
+		printf "%s\\t%s\\n" \$samplename \${tot_species} >> profile_taxa_data.txt
+	done
+
+	printf "\\tgene_families_nucleotide\\tcontributing_nucleotide\\t" > profile_functions_data.txt
+	printf "gene_families_final\\tn_contributing_final\\tperc_contributing_final\\tunmapped\\n" >> profile_functions_data.txt
 	for f in humann/*.log
 		do
 		filename=\${f##*/}
 		ext=\${filename#*.}
 		samplename=\${filename%.\$ext}
-		tot_species_prescreening=\$(grep "Total species selected from prescreen:" "\${f}" | cut -d: -f 2 | sed 's/ //g')
-		selected_species_explain=\$(grep "Selected species explain" "\${f}" | cut -d" " -f 4 | grep -o "[0-9\\.]*")
-		printf "%s\\t%s\\t%s\\n" \$samplename \${tot_species_prescreening} \${selected_species_explain} >> profile_taxa_data.txt
+		#tot_reads_aligned_nucleotide=\$(grep -zo "Total bugs from nucleotide alignment.*Total gene families from nucleotide alignment" "\${f}" | grep -Eoa "[0-9]+ hits" | grep -Eo "[0-9]+" | paste -sd+ | bc | sed 's/ //g')
+		gene_fams_nucleotide=\$(grep "Total gene families from nucleotide alignment:" "\${f}" | cut -d: -f 2 | sed 's/ //g')
+		unaligned_nucleotide=\$(grep -o "Unaligned reads after nucleotide alignment: [0-9\\.]*" "\${f}" | grep -o "[0-9\\.]*")
+		contributing_nucleotide=\$(echo "100 - \$unaligned_nucleotide" | bc)
+		#tot_reads_aligned_both=\$(grep -zo "Total bugs after translated alignment.*Total gene families after translated alignment" "\${f}" | grep -Eoa "[0-9]+ hits" | grep -Eo "[0-9]+" | paste -sd+ | bc | sed 's/ //g')
+		#tot_reads_aligned_translated=\$((\$tot_reads_aligned_both - \$tot_reads_aligned_nucleotide))
+		unaligned_final=\$(grep "Unaligned reads after translated alignment:" "\${f}" | grep -o "[0-9\\.]*")
+		contributing_final=\$(echo "100 - \$unaligned_final" | bc)
+		nInput=\$( grep -E "\$samplename\\W" decontam_data.txt | sed -E 's/^\\w*\\t\\w*\\t([0-9]*).*\$/\\1/' )
+		nContributing_final=\$(echo "\$contributing_final * \$nInput / 100" | bc | awk '{printf("%d\\n",\$1 + 0.5)}' ) 
+		unmapped=\$((\$nInput-\$nContributing_final))
+		gene_fams_final=\$(grep "Total gene families after translated alignment:" "\${f}" | cut -d: -f 2 | sed 's/ //g')
+		printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" \$samplename \${gene_fams_nucleotide} \${contributing_nucleotide} \${gene_fams_final} \${nContributing_final} \${contributing_final} \${unmapped} >> profile_functions_data.txt
 	done
 
-	printf "\\taligned_nucleotide\\tunaligned_nucleotide_percent\\t" > profile_functions_data.txt
-	printf "aligned_translated\\tperc_explained\\tgene_families\\n" >> profile_functions_data.txt
-	for f in humann/*.log
+	printf "Sample\\tHost\\tMicrobial\\tUnmapped\\n" > host_microbial_composition.txt
+	{
+    	read # skip first line
+		while read sample host qcd
 		do
-		filename=\${f##*/}
-		ext=\${filename#*.}
-		samplename=\${filename%.\$ext}
-		tot_reads_aligned_nucleotide=\$(grep -zo "Total bugs from nucleotide alignment.*Total gene families from nucleotide alignment" "\${f}" | grep -Eoa "[0-9]+ hits" | grep -Eo "[0-9]+" | paste -sd+ | bc | sed 's/ //g')
-		unaligned_reads_nucleotide=\$(grep -o "Unaligned reads after nucleotide alignment: [0-9\\.]*" "\${f}" | grep -o "[0-9\\.]*")
-		tot_reads_aligned_both=\$(grep -zo "Total bugs after translated alignment.*Total gene families after translated alignment" "\${f}" | grep -Eoa "[0-9]+ hits" | grep -Eo "[0-9]+" | paste -sd+ | bc | sed 's/ //g')
-		tot_reads_aligned_translated=\$((\$tot_reads_aligned_both - \$tot_reads_aligned_nucleotide))
-		unaligned_reads_translated=\$(grep "Unaligned reads after translated alignment:" "\${f}" | grep -o "[0-9\\.]*")
-		perc_explained=\$(echo "100 - \$unaligned_reads_translated" | bc)
-		tot_gene_family=\$(grep "Total gene families after translated alignment:" "\${f}" | cut -d: -f 2 | sed 's/ //g')
-		printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" \$samplename \${tot_reads_aligned_nucleotide} \${unaligned_reads_nucleotide} \${tot_reads_aligned_translated} \${perc_explained} \${tot_gene_family} >> profile_functions_data.txt
-	done
+		printf "%s\\t%s\\n" "\$sample" "\$host" >> host_microbial_composition.txt
+		done
+	} < decontam_data.txt
+
+	{
+		read
+		while read sample gene_families_nucleotide contributing_nucleotide gene_families_final n_contributing_final perc_contributing_final unmapped
+		do
+		sedstr="s/(\${sample}\\t.*)\$/\\1\\t\${n_contributing_final}\\t\${unmapped}/"
+	 	sed -i -E "\${sedstr}" host_microbial_composition.txt
+		done
+	} < profile_functions_data.txt
+
+    #for f in multiqc_data_prev/*.tsv
+    #    do
+    #    current_data_file=\$( basename \$f )
+    #    echo 'python -s combine_tsvs.py "\${current_data_file}" "\$f"'
+    #done
 
 	multiqc --config $multiqc_config . -f --custom-css-file yamp.css
     """
