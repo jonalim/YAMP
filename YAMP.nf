@@ -1073,13 +1073,13 @@ process collect_functional_profiles {
 
 	output:
 	path('*.tsv') into collected_functional_profiles
-	path('all_genefamilies-relab.tsv') into gene_fams_to_hclust
+	path('all_genefamilies_stratified-relab.tsv') into gene_fams_to_hclust
 	path('all_pathabundance_unstratified.no-unintegrated.tsv') into pathabunds_to_hclust
 	path('all_pathcoverage_unstratified.tsv') into pathcovs_to_hclust
 
 	script:
 	"""
-	humann_join_tables -i ./ -o all_genefamilies.tsv --file_name genefamilies
+	humann_join_tables -i ./ -o all_genefamilies-rpk.tsv --file_name genefamilies
 	humann_join_tables -i ./ -o all_pathcoverage.temp.tsv --file_name pathcoverage
 	humann_join_tables -i ./ -o all_pathabundance.tsv --file_name pathabundance
 
@@ -1087,17 +1087,19 @@ process collect_functional_profiles {
 	grep -vP "(?:^UNMAPPED)|(?:^UNINTEGRATED)" all_pathcoverage.temp.tsv > all_pathcoverage.tsv
 	rm -f all_pathcoverage.temp.tsv
 	
-	humann_split_stratified_table --input all_genefamilies.tsv --output ./
+	humann_split_stratified_table --input all_genefamilies-rpk.tsv --output ./
+	mv all_genefamilies-rpk_stratified.tsv all_genefamilies_stratified-rpk.tsv
+	mv all_genefamilies-rpk_unstratified.tsv all_genefamilies_unstratified-rpk.tsv
+	
 	humann_split_stratified_table --input all_pathabundance.tsv --output ./
 	humann_split_stratified_table --input all_pathcoverage.tsv --output ./
 
 	grep -vP "(?:^UNMAPPED)|(?:^UNINTEGRATED)" all_pathabundance_unstratified.tsv > all_pathabundance_unstratified.no-unintegrated.tsv
 
-	humann_renorm_table -i all_genefamilies.tsv -o all_genefamilies-copm.tsv --units cpm
-	humann_renorm_table -i all_genefamilies.tsv -o all_genefamilies-relab.tsv --units relab
+	humann_renorm_table -i all_genefamilies_stratified-rpk.tsv -o all_genefamilies_stratified-copm.tsv --units cpm
+	humann_renorm_table -i all_genefamilies_stratified-rpk.tsv -o all_genefamilies_stratified-relab.tsv --units relab
 	"""
 }
-
 
 process hclust_functional_profiles {
 	label 'hclust'
@@ -1120,9 +1122,9 @@ process hclust_functional_profiles {
 		cluster_columns="--no_fclustering"
 	fi
 
-	hclust2.py -i ${gene_fam_table} -o all_genefamilies.top50.hclust2.png --skip_rows 0 \\
+	hclust2.py -i ${gene_fam_table} -o all_genefamilies_stratified.top50.hclust2.png --skip_rows 0 \\
 		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s \\
-		--flabel_size 4 --legend_file all_genefamilies.top50.legend.png --max_flabel_len 100 \\
+		--flabel_size 4 --legend_file all_genefamilies_stratified.top50.legend.png --max_flabel_len 100 \\
 		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete \$cluster_columns
 
 	hclust2.py -i ${path_cov_table} -o all_pathcoverage_unstratified.top50.hclust2.png \\
@@ -1138,7 +1140,6 @@ process hclust_functional_profiles {
 		--minv 0.01 --no_slabels --dpi 300 --slinkage complete \$cluster_columns
 	"""
 }
-
 
 /**
 	Community Characterisation - STEP 3. Evaluates several alpha-diversity measures.
