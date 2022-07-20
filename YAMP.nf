@@ -232,7 +232,7 @@ if (!params.skip_preprocess)
 	summary['Input quality offset'] = params.qin == 33 ? 'ASCII+33' : 'ASCII+64'
 
 	//remove_synthetic_contaminants
-	summary['Synthetic contaminant removal:'] = ""
+	summary['Synthetic contaminants:'] = ""
 	summary['Artefacts'] = params.artefacts
 	summary['Phix174ill'] = params.phix174ill
 	summary['K-mer size'] = "31"
@@ -240,7 +240,7 @@ if (!params.skip_preprocess)
 	//Trimming
 	summary['Adapter/quality trimming:'] = ""
 	summary['Adapters'] = params.adapters
-	summary['Additional Trimmomatic parameters:'] = "ILLUMINACLIP:<adapters>:2:30:10:8:True SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength"
+	summary['Trimmomatic parameters:'] = "ILLUMINACLIP:[adapters]:2:30:10:8:True SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength"
 
 	//Decontamination
 	summary['Host decontamination:'] = ""
@@ -521,33 +521,8 @@ process preprocess {
 	gzip \"decontam/${name}.no_synthetic_contaminants_kneaddata_\${foreign_name}_bowtie2_contam.fastq\" \\
 		--stdout > \"decontam/${name}.contamination.fq.gz\"
 	rm \"decontam/${name}.no_synthetic_contaminants_kneaddata_\${foreign_name}_bowtie2_contam.fastq\"
-
-	#bbduk.sh -Xmx\"\$maxmem\" in=\"${name}.no_synthetic_contaminants.fq.gz\" \\
-	#	out=\"${name}.trimmed.fq.gz\" ktrim=r k=$params.kcontaminants mink=$params.mink \\
-	#	hdist=$params.hdist qtrim=rl trimq=$params.phred  minlength=$params.minlength ref=$adapters \\
-	#	qin=$params.qin ordered=t threads=${task.cpus} tbo tpe ow &> 03_trim+decontam_log.txt
-	#rm \"${name}.no_synthetic_contaminants.fq.gz\"
-	# rm \"${name}_no_synthetic_contaminants_R2.fq.gz\"
-
-	# MultiQC doesn't have a module for bbduk yet. As a consequence, I
-	# had to create a YAML file with all the info I need via a bash script
-	#mkdir trim
-	#bash scrape_trimming_log.sh > trim/${name}.yaml
-
-	# decontaminate
-	# mkdir decontam
-
-	#bbwrap.sh -Xmx\"\$maxmem\" mapper=bbmap append=t in=\"${name}.trimmed.fq.gz\" \\
-	#	outu=\"decontam/${name}.QCd.fq.gz\" outm=\"decontam/${name}.contamination.fq.gz\" \\
-	#	minid=$params.mind maxindel=$params.maxindel bwr=$params.bwr bw=12 minhits=2 qtrim=rl \\
-	#	trimq=$params.phred path="./" qin=$params.qin threads=${task.cpus} untrim quickmatch fast \\
-	#	ordered=t ow &> 04_decontam_log.txt
 	rm \"decontam/${name}.no_synthetic_contaminants_kneaddata.trimmed.fastq\"
-	#rm \"${name}_trimmed_singletons.fq.gz\"
-	# rm \"${name}_trimmed_R2.fq.gz\"
 
-	# MultiQC doesn't have a module for bbwrap yet. As a consequence, I
-	# had to create a YAML file with all the info I need via a bash script
 
 	"""
 }
