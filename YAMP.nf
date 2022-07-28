@@ -436,7 +436,7 @@ adapters = file(params.adapters, type: "file", checkIfExists: true)
 process preprocess {
 	tag "$name"
 
-	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "decontam/*.fq.gz", saveAs: {filename -> file(filename).getName()}, overwrite: true
+	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "*.fq.gz", overwrite: true
 	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "01_dedup_log.txt", overwrite: true
 	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "02_syndecontam_log.txt", overwrite: true
 	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "03_trim_log.txt", overwrite: true
@@ -454,8 +454,8 @@ process preprocess {
 	file "01_dedup_log.txt" into dedup_log
 	file "02_syndecontam_log.txt" into synthetic_contaminants_log
 	file "03_trim+decontam_log.txt" into trimming_log
-	tuple val(name), path("decontam/*.QCd.fq.gz") into qcd_reads
-	tuple val(name), path("decontam/*.QCd.fq.gz") into to_profile_taxa_decontaminated
+	tuple val(name), path("${name}.QCd.fq.gz") into qcd_reads
+	tuple val(name), path("${name}.QCd.fq.gz") into to_profile_taxa_decontaminated
 
 	// parameters params.singleEnd, params.qc_matepairs, params.dedup, params.mode come into effect here
 
@@ -508,22 +508,16 @@ process preprocess {
 
 	# trim
 	kneaddata -i \"${name}.no_synthetic_contaminants.fq.gz\" \\
-    	-o decontam/ \\
+    	-o ./ --output-prefix=\"${name}\" --remove-intermediate-output --log 03_trim+decontam_log.txt \\
+		--trimmomatic-options="ILLUMINACLIP:$adapters:2:30:10 SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength" \\
     	-db $ref_foreign_genome \\
-    	--max-memory \"\$maxmem\" --trimmomatic-options="ILLUMINACLIP:$adapters:2:30:10:8:True SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength" \\
-		--log 03_trim+decontam_log.txt
-	rm \"${name}.no_synthetic_contaminants.fq.gz\"
-	gzip \"decontam/${name}.no_synthetic_contaminants_kneaddata.fastq\" --stdout \\
-		> \"decontam/${name}.QCd.fq.gz\"
-	rm \"decontam/${name}.no_synthetic_contaminants_kneaddata.fastq\"
+    	--max-memory \"\$maxmem\" --threads=${task.cpus} 
+	rm \"${name}.no_synthetic_contaminants.fq.gz\" # input to kneaddata, no longer needed
+	gzip \"${name}.fastq\" --stdout > \"${name}.QCd.fq.gz\" && rm \"${name}.fastq\" # gzip final file
 	foreign_genome_fn=\$( basename $ref_foreign_genome/*.rev.1.bt2 )
     foreign_name=\${foreign_genome_fn%.rev.1.bt2}
-	gzip \"decontam/${name}.no_synthetic_contaminants_kneaddata_\${foreign_name}_bowtie2_contam.fastq\" \\
-		--stdout > \"decontam/${name}.contamination.fq.gz\"
-	rm \"decontam/${name}.no_synthetic_contaminants_kneaddata_\${foreign_name}_bowtie2_contam.fastq\"
-	rm \"decontam/${name}.no_synthetic_contaminants_kneaddata.trimmed.fastq\"
-
-
+	gzip \"${name}_\${foreign_name}_bowtie2_contam.fastq\" --stdout > \"${name}.contamination.fq.gz\" \\
+		&& rm \"${name}_\${foreign_name}_bowtie2_contam.fastq\"
 	"""
 }
 
@@ -1048,13 +1042,13 @@ process collect_functional_profiles {
 
 	output:
 	path('*.tsv') into collected_functional_profiles
-	path('all_genefamilies_stratified-relab.tsv') into gene_fams_to_hclust
+	path('all_genefamilies.relab.stratified.tsv') into gene_fams_to_hclust
 	path('all_pathabundance_unstratified.no-unintegrated.tsv') into pathabunds_to_hclust
 	path('all_pathcoverage_unstratified.tsv') into pathcovs_to_hclust
 
 	script:
 	"""
-	humann_join_tables -i ./ -o all_genefamilies-rpk.tsv --file_name genefamilies
+	humann_join_tables -i ./ -o all_genefamilies.rpk.tsv --file_name genefamilies
 	humann_join_tables -i ./ -o all_pathcoverage.temp.tsv --file_name pathcoverage
 	humann_join_tables -i ./ -o all_pathabundance.tsv --file_name pathabundance
 
@@ -1062,17 +1056,17 @@ process collect_functional_profiles {
 	grep -vP "(?:^UNMAPPED)|(?:^UNINTEGRATED)" all_pathcoverage.temp.tsv > all_pathcoverage.tsv
 	rm -f all_pathcoverage.temp.tsv
 	
-	humann_split_stratified_table --input all_genefamilies-rpk.tsv --output ./
-	mv all_genefamilies-rpk_stratified.tsv all_genefamilies_stratified-rpk.tsv
-	mv all_genefamilies-rpk_unstratified.tsv all_genefamilies_unstratified-rpk.tsv
+	humann_renorm_table -i all_genefamilies.rpk.tsv -o all_genefamilies.relab.tsv --units relab
+	
+	humann_split_stratified_table --input all_genefamilies.relab.tsv --output ./
+	rm all_genefamilies.relab.tsv
+	mv all_genefamilies.relab_stratified.tsv all_genefamilies.relab.stratified.tsv
+	mv all_genefamilies.relab_unstratified.tsv all_genefamilies.relab.unstratified.tsv
 	
 	humann_split_stratified_table --input all_pathabundance.tsv --output ./
 	humann_split_stratified_table --input all_pathcoverage.tsv --output ./
 
 	grep -vP "(?:^UNMAPPED)|(?:^UNINTEGRATED)" all_pathabundance_unstratified.tsv > all_pathabundance_unstratified.no-unintegrated.tsv
-
-	humann_renorm_table -i all_genefamilies_stratified-rpk.tsv -o all_genefamilies_stratified-copm.tsv --units cpm
-	humann_renorm_table -i all_genefamilies_stratified-rpk.tsv -o all_genefamilies_stratified-relab.tsv --units relab
 	"""
 }
 
@@ -1097,21 +1091,24 @@ process hclust_functional_profiles {
 		cluster_columns="--no_fclustering"
 	fi
 
-	hclust2.py -i ${gene_fam_table} -o all_genefamilies_stratified.top50.hclust2.png --skip_rows 0 \\
+	file="$gene_fam_table"
+	hclust2.py -i ${gene_fam_table} -o \${file%.*}.top50.hclust2.png --skip_rows 0 \\
 		--ftop 50 --f_dist_f cosine --s_dist_f braycurtis --cell_aspect_ratio 9 -s \\
-		--flabel_size 4 --legend_file all_genefamilies_stratified.top50.legend.png --max_flabel_len 100 \\
+		--flabel_size 4 --legend_file \${file%.*}.top50.legend.png --max_flabel_len 100 \\
 		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete \$cluster_columns
 
-	hclust2.py -i ${path_cov_table} -o all_pathcoverage_unstratified.top50.hclust2.png \\
+	file="$path_cov_table"
+	hclust2.py -i ${path_cov_table} -o \${file%.*}.top50.hclust2.png \\
 		 --skip_rows 0 --ftop 50 --f_dist_f cosine --s_dist_f cityblock --cell_aspect_ratio 9 -s \\
-		--flabel_size 4 --legend_file all_pathcoverage.top50.legend.png --max_flabel_len 100 \\
+		--flabel_size 4 --legend_file \${file%.*}.top50.legend.png --max_flabel_len 100 \\
 		--metadata_height 0.075 --minv 0.01 --no_slabels --dpi 300 --slinkage complete \\
 		--no_fclustering \$cluster_columns
 
+	file="$path_abund_table"
 	hclust2.py -i ${path_abund_table} \\
-		-o all_pathabundance_unstratified.no-unintegrated.top50.hclust2.png --skip_rows 0 --ftop 50 \\
+		-o \${file%.*}.top50.hclust2.png --skip_rows 0 --ftop 50 \\
 		--f_dist_f cosine --s_dist_f canberra --cell_aspect_ratio 9 -s --flabel_size 4 \\
-		--legend_file all_pathabundance.top50.legend.png --max_flabel_len 100 --metadata_height 0.075 \\
+		--legend_file \${file%.*}.top50.legend.png --max_flabel_len 100 --metadata_height 0.075 \\
 		--minv 0.01 --no_slabels --dpi 300 --slinkage complete \$cluster_columns
 	"""
 }

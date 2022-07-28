@@ -20,12 +20,12 @@ module_order:
         name: 'FastQC (QCd reads)'
         anchor: 'fastqc_qcd'
         info: 'This section of the report shows FastQC results after the QC.'
-        path_filters:
+        path_filters_exclude:
             - './fastqc_raw/*_fastqc.zip'
 
 
-sample_names_replace_regex: true
-sample_names_replace_exact: true
+# sample_names_replace_regex: true
+# sample_names_replace_exact: true
 skip_generalstats: false
 max_table_rows: 99999
 
@@ -33,26 +33,14 @@ max_table_rows: 99999
 report_section_order:
     fastqc_raw:
       order: 20
-    deduplication:
-      order: 19
-    synthetic-contaminants:
-      order: 18
-    trimming:
-      order: 17
-    indexing-foreign-genome:
-      order: 16
-    decontamination:
-      order: 15
     fastqc_qcd:
       order: 14
-    merge_paired_end_cleaned:
-      order: 13
-    metaphlan:
-      order: 12
-    humann:
-      order: 11
-    alpha-diversity:
-      order: 10
+    # metaphlan:
+    #   order: 12
+    # humann:
+    #   order: 11
+    # alpha-diversity:
+    #   order: 10
     software-versions:
       order: -1
     workflow-summary:
@@ -191,8 +179,11 @@ sp:
     fn: "profile_functions_data.txt"
   host_microbial_composition:
     fn: "host_microbial_composition.txt"
-  genstats:
-    fn: "multiqc_general_stats.txt"
+  # genstats:
+  #   fn: "multiqc_general_stats.txt"
+
+fn_ignore_dirs:
+  - "multiqc_data"
 
 table_columns_placement:
   FastQC (Raw reads):
