@@ -232,7 +232,7 @@ if (!params.skip_preprocess)
 	summary['Input quality offset'] = params.qin == 33 ? 'ASCII+33' : 'ASCII+64'
 
 	//remove_synthetic_contaminants
-	summary['Synthetic contaminant removal:'] = ""
+	summary['Synthetic contaminants:'] = ""
 	summary['Artefacts'] = params.artefacts
 	summary['Phix174ill'] = params.phix174ill
 	summary['K-mer size'] = "31"
@@ -240,7 +240,7 @@ if (!params.skip_preprocess)
 	//Trimming
 	summary['Adapter/quality trimming:'] = ""
 	summary['Adapters'] = params.adapters
-	summary['Additional Trimmomatic parameters:'] = "ILLUMINACLIP:<adapters>:2:30:10:8:True SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength"
+	summary['Trimmomatic parameters:'] = "ILLUMINACLIP:[adapters]:2:30:10:8:True SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength"
 
 	//Decontamination
 	summary['Host decontamination:'] = ""
@@ -901,7 +901,6 @@ process collect_functional_profiles {
 	"""
 }
 
-
 process hclust_functional_profiles {
 	label 'hclust'
 
@@ -933,12 +932,12 @@ process hclust_functional_profiles {
 	hclust2.py -i ${gene_fam_table} -o \${file%.*}.top50.hclust2.png \\
 		--skip_rows 0 --ftop 50 \\
 		\$cluster_columns --f_dist_f cosine --s_dist_f braycurtis --slinkage complete \\
-		--dpi 600 --sqrt_scale \\
+		--dpi 300 --sqrt_scale \\
 		--no_slabels --flabel_size 4 --colorbar_font_size 4 --max_flabel_len 100 \\
 		--title "Gene family abundance (copies per million)" --cell_aspect_ratio \$aspect
 		
 	file="$path_cov_table"
-	hclust2.py -i ${path_cov_table} -o\${file%.*}.top50.hclust2.2.png \
+	hclust2.py -i ${path_cov_table} -o \${file%.*}.top50.hclust2.png \\
      	--skip_rows 0 --ftop 50 \\
     	\$cluster_columns --f_dist_f cosine --s_dist_f cityblock --slinkage complete \\
     	--dpi 300 --sqrt_scale \\
@@ -953,7 +952,6 @@ process hclust_functional_profiles {
 		--title "Pathway abundance (copies per million)" --cell_aspect_ratio \$aspect
 	"""
 }
-
 
 /**
 	Community Characterisation - STEP 3. Evaluates several alpha-diversity measures.
