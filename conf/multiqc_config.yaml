@@ -180,19 +180,17 @@ custom_data:
 
 sp:
   Clumpify:
-    fn: "dedup_data.txt"
-  BBDuk:
-    fn: "bbduk_data.txt"
-  BBMap:
-    fn: "decontam_data.txt"
-  Metaphlan:
-    fn: "profile_taxa_data.txt"
-  Humann:
-    fn: "profile_functions_data.txt"
-  host_microbial_composition:
-    fn: "host_microbial_composition.txt"
-  genstats:
     fn: "multiqc_general_stats.txt"
+  BBDuk:
+    fn: "multiqc_general_stats.txt"
+  BBMap:
+    fn: "multiqc_general_stats.txt"
+  Metaphlan:
+    fn: "multiqc_general_stats.txt"
+  Humann:
+    fn: "multiqc_general_stats.txt"
+  host_microbial_composition:
+    fn: "multiqc_host_microbial_composition.txt"
 
 table_columns_placement:
   FastQC (Raw reads):
