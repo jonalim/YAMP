@@ -407,26 +407,25 @@ if (!params.skip_preprocess) {
 	  deduplication is not run)
 */
 
-if (params.singleEnd) {
-	// FIXME UNSUPPORTED
-	// Channel
-	// .from([[params.prefix, [file(params.reads1)]]])
-	// .into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants }
-} else {
-	if(params.qc_matepairs) {
-		Channel.fromFilePairs("${params.indir}/*/ILLUMINA_DATA/*_R{1,2}.fastq.gz", size: -1) { file -> file.getParent().getParent().getName() }
-			.into {read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants; read_files_log }
-		// Channel
-		// .fromFilePairs("${params.indir}/*_R{1,2}.fastq.gz", checkIfExists: true)
-		// //.from([[params.prefix, [file(params.reads1), file(params.reads2)]]] )
-		// .into { read_files_fastqc; read_files_dedup; read_files_synthetic_contaminants; read_files_log }
-	} else {
-		Channel.fromFilePairs("${params.indir}/*/ILLUMINA_DATA/*_R{1,2}.fastq.gz", size: -1) { file -> file.getParent().getParent().getName() }
-			.set { to_combine_reads }
-		// Channel.fromFilePairs("${params.indir}/*_R{1,2}.fastq.gz", checkIfExists: true)
-		// .set {to_combine_reads}
-	}
+if(params.only_samples) {
+	// Load samples from this manifest into a glob pattern
+	glob_pattern = "${params.indir}/{"	
+	file(params.only_samples, checkIfExists: true)
+		.readLines()
+		.each { it ->
+			samplename = (it =~ /^(\S+)/)[0][1] 
+			if(file("${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz").size() != 2) {
+				raise Exception("Couldn't find raw files for ${samplename}. Glob pattern: ${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz.")
+			}
+			glob_pattern += samplename + ","
+		}
+	glob_pattern = StringUtils.chop(glob_pattern)
+	glob_pattern += "}/ILLUMINA_DATA/*_R{1,2}.fastq.gz"
+} else  {
+	glob_pattern = "${params.indir}/*/ILLUMINA_DATA/*_R{1,2}.fastq.gz"
 }
+Channel.fromFilePairs(glob_pattern, size: -1) { file -> file.getParent().getParent().getName() }
+		.set { to_combine_reads }
 
 // Defines channels for resources file
 artefacts = file(params.artefacts, type: "file", checkIfExists: true )
@@ -923,7 +922,7 @@ process hclust_functional_profiles {
 		cluster_columns="--no_fclustering"
 	fi
 
-	aspect=\$( echo "$nSamples*0.03" | bc | awk '{printf("%d\\n",\$1 + 0.5)}' ) 
+	aspect=\$( echo "$nSamples*0.03" | bc -l | awk '{printf("%d\\n",\$1 + 0.5)}' ) 
 	aspect=\$( [[ "\$aspect" -gt 9 ]] && echo "9" || echo "\$aspect" ) # bounded to 1 and 9
 	aspect=\$( [[ "\$aspect" -lt 1 ]] && echo "1" || echo "\$aspect" )
 
@@ -1041,7 +1040,7 @@ if(params.skip_profile_taxa) {
 }
 // Report data from a previous execution, to be merged with current report data
 multiqc_data_prev = Channel.empty()
-if(params.resume_multiqc) {
+if(params.combine_multiqc && new File("${params.indir}/multiqc_data").exists()) {
     Channel.fromPath("${params.indir}/multiqc_data/")
         .set { multiqc_data_prev }
 }
@@ -1055,6 +1054,8 @@ process log {
     } else {
         container params.docker_container_multiqc
     }
+
+	stageInMode "copy"
 
 	input:
 	file multiqc_config from file(params.multiqc_config, type: 'file', checkIfExists: true )
@@ -1072,15 +1073,15 @@ process log {
 		//atm we do nothing with the qiime output
 	path "qiime/*" from alpha_diversity_log.collect().ifEmpty([])
 	file "humann/*" from profile_functions_log.collect().ifEmpty([])
-    path multiqc_data_prev, stageAs: "multiqc_data_prev/" from multiqc_data_prev.collect().ifEmpty([])
+    path multiqc_data_prev, stageAs: "multiqc_data_prev" from multiqc_data_prev.collect().ifEmpty([])
 
 	output:
-	path "*multiqc_report*.html"
-	path "*multiqc_data*"
+	path "multiqc_report.html"
+	path "multiqc_data/*"
 
 	script:
 	"""
-	printf "\\traw\\tdeduped\\tsynDecontam\\ttrimmed\\thost\\tqcd" > multiqc_general_stats.txt 
+	printf "Sample\\traw\\tdeduped\\tsynDecontam\\ttrimmed\\thost\\tqcd" > multiqc_general_stats.txt 
 	printf "\\tnSpecies\\tgene_families_nucleotide\\tcontributing_nucleotide" >> multiqc_general_stats.txt
 	printf "\\tgene_families_final\\tn_contributing_final\\t" >> multiqc_general_stats.txt
 	printf "perc_contributing_final\\tunmapped\\n" >> multiqc_general_stats.txt
@@ -1111,19 +1112,12 @@ process log {
 		samplename=\$(grep -oP "^input = [^\\s\\.]*" \${f} | sed -E 's/.*\\///' )
 		totR=\$(grep -oP "TrimmomaticSE: Started with arguments:.*Input Reads: [0-9]*" \${f} | grep -oP "[0-9]*\$" )
 		remR=\$(grep -oP "TrimmomaticSE: Started with arguments:.*Dropped: [0-9]*" \${f} | grep -oP "[0-9]*\$" )
-		reads=\$((\$totR-\$remR))
-	 	sedstr="s/(\\"\${samplename}\\"\\t.*)\$/\\1\\t\${reads}/"
-	 	sed -i -E "\${sedstr}" multiqc_general_stats.txt 
-	done
-
-	for f in fastqc_QCd/*.html
-		do
-		reads=\$(grep -o "<tr><td>Total Sequences</td><td>[0-9]*</td></tr>" "\${f}" | grep -o "[0-9]*")
-		filename=\${f##*/}
-		samplename=\${filename%_fastqc.html}
-		nInput=\$(grep -E "\$samplename\\"\\W" bbduk_data.txt | sed -E 's/^\\S*\\t\\S*\\t([0-9]*).*\$/\\1/')
-		nRemoved=\$((\$nInput-\$reads))
-		sedstr="s/(\\"\${samplename}\\"\\t.*)\$/\\1\\t\${nRemoved}\\t\${reads}/"
+		trimmed=\$((\$totR-\$remR))
+	
+		final=\$(grep -P "READ COUNT: final single" \${f} | grep -oP "[0-9\\.]*\$" | grep -oP "^[0-9]*" )
+		nRemoved=\$((\$trimmed-\$final))
+ 	
+		sedstr="s/(\\"\${samplename}\\"\\t.*)\$/\\1\\t\${trimmed}\\t\${nRemoved}\\t\${final}/"
 	 	sed -i -E "\${sedstr}" multiqc_general_stats.txt 
 	done
 
@@ -1141,16 +1135,15 @@ process log {
 		filename=\${f##*/}
 		ext=\${filename#*.}
 		samplename=\${filename%.\$ext}
-		#tot_reads_aligned_nucleotide=\$(grep -zo "Total bugs from nucleotide alignment.*Total gene families from nucleotide alignment" "\${f}" | grep -Eoa "[0-9]+ hits" | grep -Eo "[0-9]+" | paste -sd+ | bc | sed 's/ //g')
+		
 		gene_fams_nucleotide=\$(grep "Total gene families from nucleotide alignment:" "\${f}" | cut -d: -f 2 | sed 's/ //g')
 		unaligned_nucleotide=\$(grep -o "Unaligned reads after nucleotide alignment: [0-9\\.]*" "\${f}" | grep -o "[0-9\\.]*")
 		contributing_nucleotide=\$(echo "100 - \$unaligned_nucleotide" | bc)
-		#tot_reads_aligned_both=\$(grep -zo "Total bugs after translated alignment.*Total gene families after translated alignment" "\${f}" | grep -Eoa "[0-9]+ hits" | grep -Eo "[0-9]+" | paste -sd+ | bc | sed 's/ //g')
-		#tot_reads_aligned_translated=\$((\$tot_reads_aligned_both - \$tot_reads_aligned_nucleotide))
+		
 		unaligned_final=\$(grep "Unaligned reads after translated alignment:" "\${f}" | grep -o "[0-9\\.]*")
 		contributing_final=\$(echo "100 - \$unaligned_final" | bc)
-		nInput=\$( grep -E "\$samplename\\"\\W" decontam_data.txt | sed -E 's/^\\S*\\t\\S*\\t([0-9]*).*\$/\\1/' )
-		nContributing_final=\$(echo "\$contributing_final / 100 * \$nInput" | bc | awk '{printf("%d\\n",\$1 + 0.5)}' ) 
+		nInput=\$(grep -P "^\\"\${samplename}\\"\\s" "multiqc_general_stats.txt" | sed -E 's/^\\S*\\t\\S*\\t\\S*\\t\\S*\\t\\S*\\t\\S*\\t([0-9]*).*\$/\\1/' ) # just be careful to update this if the column order changes!!
+		nContributing_final=\$(echo "\$contributing_final / 100 * \$nInput" | bc -l | awk '{printf("%d\\n",\$1 + 0.5)}' ) 
 		unmapped=\$((\$nInput-\$nContributing_final))
 		gene_fams_final=\$(grep "Total gene families after translated alignment:" "\${f}" | cut -d: -f 2 | sed 's/ //g')
 		sedstr="s/(\\"\${samplename}\\"\\t.*)\$/\\1\\t\${gene_fams_nucleotide}\\t\${contributing_nucleotide}\\t\${gene_fams_final}\\t\${nContributing_final}\\t\${contributing_final}\\t\${unmapped}/"
@@ -1166,13 +1159,16 @@ process log {
 		done
 	} < multiqc_general_stats.txt
 
-    for f in $multiqc_data_prev/*.txt
-        do
-        current_data_file=\$( basename \$f )
-		if [[ -e \$current_data_file ]]; then
-        	python -s \$( which combine_tsvs.py ) "\$f" "\${current_data_file}"
-		fi
-    done
+	multiqc_data_prev_dir="$multiqc_data_prev"
+	if [[ -n \$multiqc_data_prev_dir ]]; then
+		for f in $multiqc_data_prev/*.txt
+			do
+			current_data_file=\$( basename \$f )
+			if [[ -e \$current_data_file ]]; then
+				python -s \$( which combine_tsvs.py ) "\$f" "\${current_data_file}"
+			fi
+		done
+	fi
 
 	multiqc --config $multiqc_config . -f --custom-css-file yamp.css
     """

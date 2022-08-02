@@ -181,7 +181,7 @@ sp:
     fn: "multiqc_host_microbial_composition.txt"
 
 fn_ignore_dirs:
-  - "multiqc_data"
+  - "multiqc_data_prev"
 
 table_columns_placement:
   FastQC (Raw reads):
