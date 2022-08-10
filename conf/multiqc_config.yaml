@@ -23,9 +23,6 @@ module_order:
         path_filters_exclude:
             - './fastqc_raw/*_fastqc.zip'
 
-
-# sample_names_replace_regex: true
-# sample_names_replace_exact: true
 skip_generalstats: false
 max_table_rows: 99999
 
@@ -35,58 +32,46 @@ report_section_order:
       order: 20
     fastqc_qcd:
       order: 14
-    # metaphlan:
-    #   order: 12
-    # humann:
-    #   order: 11
-    # alpha-diversity:
-    #   order: 10
     software-versions:
       order: -1
     workflow-summary:
       order: -2
 
 custom_data:
-  Clumpify:
+  QC:
     plot_type: "generalstats"
     pconfig:
       - raw:
           title: "Raw&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
-          description: "Total reads prior to QC"
+          description: "Clumpify: Total reads prior to QC"
           min: 0
           scale: "Blues"
           format: "{:,.0f}"
           placement: 899
       - deduped:
           title: "Deduplicated"
-          description: "Total deduplicated reads"
+          description: "Clumpify: Total deduplicated reads"
           min: 0
           scale: "Blues"
           format: "{:,.0f}"
           placement: 900
-  BBDuk:
-    plot_type: "generalstats"
-    pconfig:
       - synDecontam:
           title: "Decontaminated"
-          description: "Total reads surviving removal of synthetic contaminants"
+          description: "BBDuk: Total reads surviving removal of synthetic contaminants"
           min: 0
           scale: "Blues"
           format: "{:,.0f}"
           placement: 901
       - trimmed:
           title: "Trimmed&nbsp;&nbsp;"
-          description: "Total reads surviving post-trimming length filter"
+          description: "BBDuk: Total reads surviving post-trimming length filter"
           min: 0
           scale: "Blues"
           format: "{:,.0f}"
           placement: 902
-  BBMap:
-    plot_type: "generalstats"
-    pconfig:
       - host:
           title: "Host Reads"
-          description: "Total reads mapped to host genome and removed."
+          description: "BBMap: Total reads mapped to host genome and removed."
           min: 0
           scale: "Blues"
           format: "{:,.0f}"
@@ -98,29 +83,26 @@ custom_data:
           scale: "Greens"
           format: "{:,.0f}"
           placement: 904
-  Metaphlan:
+  Profiling:
     plot_type: "generalstats"
     pconfig:
       - nSpecies:
           title: "Species"
-          description: "Total species found"
+          description: "Metaphlan: Total species found"
           min: 0
           scale: "Blues"
           format: "{:,.0f}"
           placement: 1101
-  Humann:
-    plot_type: "generalstats"
-    pconfig:
       - gene_families_nucleotide:
           title: "G.Fam (Nucleotide)"
-          description: "Gene families found by nucleotide alignment"
+          description: "Humann: Gene families found by nucleotide alignment"
           min: 0
           scale: "Blues"
           format: "{:,.0f}"
           placement: 1103
       - contributing_nucleotide:
           title: "% Contributing (Nucleotide)"
-          description: "Percent of QCd reads contributing to functional profile after nucleotide alignment"
+          description: "Humann: Percent of QCd reads contributing to functional profile after nucleotide alignment"
           min: 0
           max: 100
           scale: "Greens"
@@ -128,26 +110,26 @@ custom_data:
           placement: 1104
       - gene_families_final:
           title: "G.Fam (Final)"
-          description: "Gene families found by nucleotide and translated alignment"
+          description: "Humann: Gene families found by nucleotide and translated alignment"
           min: 0
           scale: "Blues"
           placement: 1105
       - perc_contributing_final:
           title: "% Contributing (Final)"
-          description: "Percent of QCd reads contributing to functional profile after nucleotide and translated alignment"
+          description: "Humann: Percent of QCd reads contributing to functional profile after nucleotide and translated alignment"
           min: 0
           max: 100
           scale: "Greens"
           placement: 1106
       - n_contributing_final:
           title: "Reads Contributing (Final)"
-          description: "Count of QCd reads contributing to functional profile after nucleotide and translated alignment"
+          description: "Humann: Count of QCd reads contributing to functional profile after nucleotide and translated alignment"
           min: 0
           scale: "Greens"
           placement: 1107
       - unmapped:
           title: "Unmapped"
-          description: "Reads not mapping to any significantly abundant microbial species (see documentation on HUMAnN prescreen)"
+          description: "Humann: Reads not mapping to any significantly abundant microbial species (see documentation on HUMAnN prescreen)"
           min: 0
           scale: "Blues"
           placement: 1108
@@ -156,6 +138,13 @@ custom_data:
     section_name: "Host/Microbial Composition"
     description: "Composition of each sample categorized as host or microbial"
     plot_type: "bargraph"
+    categories:
+      Microbial:
+        color: "#90ed7d"
+      Host:
+        color: "#7cb5ec"
+      Unmapped:
+        color: "#434348"
     pconfig:
       id: "host_microbial_composition"
       title: "Summary: Host/Microbial Composition"
@@ -164,24 +153,15 @@ custom_data:
       ymin: 0
       yMinRange: 100
       yDecimals: false
-      tt_suffix: "QC'd reads"
+      tt_suffix: " QC'd reads"
 
 sp:
-  Clumpify:
-    fn: "multiqc_general_stats.txt"
-  BBDuk:
-    fn: "multiqc_general_stats.txt"
-  BBMap:
-    fn: "multiqc_general_stats.txt"
-  Metaphlan:
-    fn: "multiqc_general_stats.txt"
-  Humann:
-    fn: "multiqc_general_stats.txt"
+  QC:
+    fn: "qc_stats.txt"
+  Profiling:
+    fn: "profiling_stats.txt"
   host_microbial_composition:
-    fn: "multiqc_host_microbial_composition.txt"
-
-fn_ignore_dirs:
-  - "multiqc_data_prev"
+    fn: "host_microbial_composition.txt"
 
 table_columns_placement:
   FastQC (Raw reads):

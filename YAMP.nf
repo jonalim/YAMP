@@ -51,18 +51,9 @@ but WITHOUT ANY WARRANTY. See the GNU GPL v3.0 for more details.
     --prefix   prefix  Prefix used to name the result files
     --outdir   path    Output directory (will be outdir/prefix/)
 
-  Main options:
-    --mode       <QC|characterisation|complete>
-    --singleEnd  <true|false>   whether the layout is single-end
-    --qc_matepairs  <true|false> whether to wait until after QC to combine mate pairs
-    --dedup      <true|false>   whether to perform de-duplication
-
   Profiles:
-    --profile msl    Profile for all MSL analysis.
-                        Dedup: false
-                        Decontaminate: true
-                        Adapters: /local/projects/drasko/thazen/scripts/illumina.adapters.current.fasta.txt
-                        Phix174ill:  /local/projects/drasko/thazen/scripts/phiX174.fas
+    --profile base,conda,sge    Profile for all MD Genomics analysis.
+	--profile test,conda,sge	Profile for validation runs
 
   Other options:
   Parameters for removing synthetic contaminants:
@@ -76,8 +67,7 @@ but WITHOUT ANY WARRANTY. See the GNU GPL v3.0 for more details.
     --adapters            path    FASTA file with adapters
 
   Parameters for decontamination:
-    --foreign_genome      path    FASTA file for contaminant (pan)genome
-    --foreign_genome_ref  path    folder for for contaminant (pan)genome (pre indexed)
+    --foreign_genome_ref  path    folder for for contaminant (pan)genome (directory of bowtie2 indexes)
 
   MetaPhlAn parameters for taxa profiling:
     --metaphlan_databases path    folder for the MetaPhlAn database
@@ -86,6 +76,18 @@ but WITHOUT ANY WARRANTY. See the GNU GPL v3.0 for more details.
   HUMANn parameters for functional profiling:
     --chocophlan          path    folder for the ChocoPhlAn database
     --uniref              path      folder for the UniRef database
+  
+  --only_samples		  path		Changes the way in which this pipeline finds samples to process.
+									The pipeline will only process the samples listed in the file
+									provided as the value of this option. This file should be a TSV with
+									each sample name at the start of each line, without a header.
+
+  --combine_multiqc					Gather existing summary stats in the project directory and combine them with new
+									data files to create a unified MultiQC report. Any new data for samples that
+									were previously processed will override old data. NB: Running this pipeline
+									twice in the same directory will ALWAYS overwrite any existing files, including the
+									summary_stats.txt file. Before running the pipeline in a directory containing
+									existing data, back up the summary_stats.txt file.
 
 MD Genomics Metagenomic Analysis Pipeline supports FASTQ and compressed FASTQ files.
 """
@@ -372,7 +374,7 @@ if(params.only_samples) {
     file(params.only_samples, checkIfExists: true)
         .readLines()
         .each { it ->
-            samplename = (it =~ /^(\S+)/)[0][1]
+            samplename = (it =~ /^(\S+)/)[0][1] // FIXME doens't work when last line of file is blank
             if(file("${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz").size() != 2) {
                 raise Exception("Couldn't find raw files for ${samplename}. Glob pattern: ${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz.")
             }
@@ -917,20 +919,18 @@ process sample_multiqc_logging {
 
     tag "$name"
 
-    publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "04_summary_stats.txt", overwrite: true
+    publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "04_*_stats.txt", overwrite: true
 
     input:
     tuple val(name), path(dedup_log), path(syndecontam_log), path(trim_log), path(metaphlan_log), path(humann_log) from all_logs
 
     output:
-    tuple val(name), path("04_summary_stats.txt") into combine_for_multiqc_genstats
+    path("04_qc_stats.txt") into sample_genstats
+	path("04_profiling_stats.txt") into sample_profilestats
 
     script:
     """
-    printf "Sample\\traw\\tdeduped\\tsynDecontam\\ttrimmed\\thost\\tqcd" > 04_summary_stats.txt
-    printf "\\tnSpecies\\tgene_families_nucleotide\\tcontributing_nucleotide" >> 04_summary_stats.txt
-    printf "\\tgene_families_final\\tn_contributing_final\\t" >> 04_summary_stats.txt
-    printf "perc_contributing_final\\tunmapped\\n" >> 04_summary_stats.txt
+    printf "Sample\\traw\\tdeduped\\tsynDecontam\\ttrimmed\\thost\\tqcd\\n" > 04_qc_stats.txt
 
 	if [[ -n "$dedup_log" ]]; then
 		totR=\$(grep "Reads In:" "$dedup_log" | cut -f 1 | cut -d: -f 2 | sed 's/ //g')
@@ -940,7 +940,7 @@ process sample_multiqc_logging {
 		totR=""
 		deduped=""
 	fi
-    printf "%s\\t%s\\t%s" "\\"$name\\"" "\${totR}" "\${deduped}" >> 04_summary_stats.txt
+    printf "%s\\t%s\\t%s" "\\"$name\\"" "\${totR}" "\${deduped}" >> 04_qc_stats.txt
 
 	if [[ -n "$syndecontam_log" ]]; then
 		contam=\$(grep "Contaminants:" "$syndecontam_log" | cut -d: -f 2 | cut -f 2 | cut -d" " -f 1 | sed 's/ //g')
@@ -949,7 +949,7 @@ process sample_multiqc_logging {
 		syndecontam=""
 	fi
     sedstr="s/(\\"$name\\"\\t.*)\$/\\1\\t\${syndecontam}/"
-    sed -i -E "\${sedstr}" 04_summary_stats.txt
+    sed -i -E "\${sedstr}" 04_qc_stats.txt
 
 	if [[ -n "$trim_log" ]]; then
 		filtered=\$(grep -oP "TrimmomaticSE: Started with arguments:.*Dropped: [0-9]*" "$trim_log" | grep -oP "[0-9]*\$" )
@@ -962,15 +962,18 @@ process sample_multiqc_logging {
 		host=""
 		final=""
 	fi
-    sedstr="s/(\\"$name\\"\\t.*)\$/\\1\\t\${trimmed}\\t\${host}\\t\${final}/"
-    sed -i -E "\${sedstr}" 04_summary_stats.txt
+    sedstr="s/(\\"$name\\"\\t.*)\$/\\1\\t\${trimmed}\\t\${host}\\t\${final}\\n/"
+    sed -i -E "\${sedstr}" 04_qc_stats.txt
 
+	printf "Sample\\tnSpecies\\tgene_families_nucleotide\\tcontributing_nucleotide" > 04_profiling_stats.txt
+    printf "\\tgene_families_final\\tn_contributing_final\\t" >> 04_profiling_stats.txt
+    printf "perc_contributing_final\\tunmapped\\n" >> 04_profiling_stats.txt
 	if [[ -n "$metaphlan_log" ]]; then
     	tot_species=\$(grep "s__" "$metaphlan_log" | wc -l)
 	else
 		tot_species=""
 	fi
-    printf "\\t%s" \${tot_species} >> 04_summary_stats.txt
+    printf "%s\\t%s\\n" "\\"$name\\"" \${tot_species} >> 04_profiling_stats.txt
 
 	if [[ -n "$humann_log" ]]; then
     	gene_fams_nucleotide=\$(grep "Total gene families from nucleotide alignment:" "$humann_log" | cut -d: -f 2 | sed 's/ //g')
@@ -990,8 +993,8 @@ process sample_multiqc_logging {
 		contributing_final=""
 		unmapped=""
 	fi
-    sedstr="s/(\\"$name\\"\\t.*)\$/\\1\\t\${gene_fams_nucleotide}\\t\${contributing_nucleotide}\\t\${gene_fams_final}\\t\${nContributing_final}\\t\${contributing_final}\\t\${unmapped}\\n/"
-    sed -i -E "\${sedstr}" 04_summary_stats.txt
+    sedstr="s/(\\"$name\\"\\t.*)\$/\\1\\t\${gene_fams_nucleotide}\\t\${contributing_nucleotide}\\t\${gene_fams_final}\\t\${nContributing_final}\\t\${contributing_final}\\t\${unmapped}/"
+    sed -i -E "\${sedstr}" 04_profiling_stats.txt
     """
 }
 
@@ -1035,16 +1038,16 @@ process sample_multiqc_logging {
 
 // Get sample summary stats from any other samples in the project directory
 // Any way to ensure we only have 1 file per sample (in case --combine_multiqc and --only_samples both used and there was an overlap?)
-multiqc_data_prev = Channel.empty()
+archived_genstats = Channel.empty()
+archived_profilestats = Channel.empty()
 if(params.combine_multiqc) {
 	// get only_samples
 	// get globbed files
 	// prioritize data files from THIS run of the pipeline, if an archived data file also exists for the same sample
-	Channel.fromPath("${params.indir}/*/ANALYSIS/04_summary_stats.txt")
-		.map { it -> [file(it).getParent().getParent().getName(), it] }
-        .join(combine_for_multiqc_genstats, remainder: true)
-		.map { it -> [it[2] != null ? it[2] : it[1]] }
-		.set { combine_for_multiqc_genstats }
+	Channel.fromPath("${params.indir}/qc_stats.txt")
+		.set { archived_genstats }
+	Channel.fromPath("${params.indir}/profiling_stats.txt")
+		.set { archived_profilestats }
 	Channel.fromPath("${params.indir}/*/ANALYSIS/fastqc/raw/*_fastqc.zip")
         .map { it -> [file(it).getParent().getParent().getParent().getParent().getName(), it] }
         .join(fastqc_raw_log, remainder: true)
@@ -1057,8 +1060,6 @@ if(params.combine_multiqc) {
 		.set { fastqc_qcd_log }
 } else {
 	// Drop the keys, they will not be needed or accepted by the next process
-	combine_for_multiqc_genstats.map {it -> it[1]}
-		.set { combine_for_multiqc_genstats }
 	fastqc_raw_log.map {it -> it[1]}
 		.set { fastqc_raw_log }
 	fastqc_qcd_log.map {it -> it[1]}
@@ -1085,46 +1086,67 @@ process log {
     file "software_versions_mqc.yaml" from software_versions_yaml.collect()
     path "fastqc_raw/*" from fastqc_raw_log.collect().ifEmpty([])
     path "fastqc_QCd/*" from fastqc_qcd_log.collect().ifEmpty([])
-    path("genstats*.txt") from combine_for_multiqc_genstats.collect().ifEmpty([])
+    path("sample_stats/genstats_*.txt") from sample_genstats.collect().ifEmpty([])
+	path("sample_stats/profiling_stats_*.txt") from sample_profilestats.collect().ifEmpty([])
+	path("old_qc_stats.txt") from archived_genstats.ifEmpty([])
+	path("old_profiling_stats.txt") from archived_profilestats.ifEmpty([])
 
     output:
+	path("qc_stats.txt")
+	path("profiling_stats.txt")
     path "multiqc_report.html"
     path "multiqc_data/*"
 
     script:
     """
     # collect stats files into one project-level table
-    statsfiles=( genstats*.txt )
+    statsfiles=( sample_stats/genstats*.txt )
     nFiles=\${#statsfiles[@]}
 	for (( i=0; i<\$nFiles; i++ ))
 	do
 		if [[ \$i -eq 0 ]]; then
-			cat \${statsfiles[\$i]} > multiqc_general_stats.txt
+			cat \${statsfiles[\$i]} > qc_stats.txt
 		else
-			head -2 \${statsfiles[\$i]} | tail -1 >> multiqc_general_stats.txt
+			head -2 \${statsfiles[\$i]} | tail -1 >> qc_stats.txt
 		fi
 	done
 
+    statsfiles=( sample_stats/profiling_stats*.txt )
+    nFiles=\${#statsfiles[@]}
+	for (( i=0; i<\$nFiles; i++ ))
+	do
+		if [[ \$i -eq 0 ]]; then
+			cat \${statsfiles[\$i]} > profiling_stats.txt
+		else
+			head -2 \${statsfiles[\$i]} | tail -1 >> profiling_stats.txt
+		fi
+	done
+
+	# combine with old stats, if called for
+    if [[ -e "old_qc_stats.txt" ]]; then
+		python -s \$( which combine_tsvs.py ) "old_qc_stats.txt" "qc_stats.txt"
+    fi
+    if [[ -e "old_profiling_stats.txt" ]]; then
+		python -s \$( which combine_tsvs.py ) "old_profiling_stats.txt" "profiling_stats.txt"
+    fi
+
     # extract columns verbatim for a barplot
-    printf "Sample\\tHost\\tMicrobial\\tUnmapped\\n" > multiqc_host_microbial_composition.txt
+    printf "Sample\\tHost\\tMicrobial\\tUnmapped\\n" > host_microbial_composition.txt
     {
         read # skip first line
-        while read sample raw deduped synDecontam trimmed host qcd nSpecies gene_families_nucleotide contributing_nucleotide gene_families_final n_contributing_final perc_contributing_final unmapped
+        while read sample raw deduped synDecontam trimmed host qcd
         do
-        printf "%s\\t%s\\t%s\\t%s\\n" "\$sample" "\$host" "\$n_contributing_final" "\$unmapped" >> multiqc_host_microbial_composition.txt
+            printf "%s\\t%s\\n" "\$sample" "\$host" >> host_microbial_composition.txt
         done
-    } < multiqc_general_stats.txt
-
-    #multiqc_data_prev_dir="$multiqc_data_prev"
-    #if [[ -n \$multiqc_data_prev_dir ]]; then
-    #    for f in $multiqc_data_prev/*.txt
-    #        do
-    #        current_data_file=\$( basename \$f )
-    #        if [[ -e \$current_data_file ]]; then
-    #            python -s \$( which combine_tsvs.py ) "\$f" "\${current_data_file}"
-    #        fi
-    #    done
-    #fi
+    } < qc_stats.txt
+    {
+        read
+        while read sample nSpecies gene_families_nucleotide contributing_nucleotide gene_families_final n_contributing_final perc_contributing_final unmapped
+        do
+            sedstr="s/(\${sample}\\t.*)\$/\\1\\t\${n_contributing_final}\\t\${unmapped}/"
+            sed -i -E "\${sedstr}" host_microbial_composition.txt
+        done
+    } < profiling_stats.txt
 
     multiqc --config $multiqc_config . -f --custom-css-file yamp.css
     """
