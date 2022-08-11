@@ -5,4 +5,5 @@
 #$ -m ea
 #$ -l mem_free=4G
 
-/local/projects-t3/MSL/pipelines/bin/nextflow run /local/projects-t3/MSL/pipelines/packages/YAMP/YAMP.nf -profile base,sge,conda -with-dag dag.svg --reads /local/projects-t3/XDENT/covid_samples
+#cp -r /autofs/scratch/jolim/persist/mg_mt/mg/test_data/test_data2/* ./
+/local/projects-t3/MSL/pipelines/bin/nextflow run /local/projects-t3/MSL/pipelines/packages/YAMP/YAMP.nf -profile base,sge,conda -with-dag dag.svg --indir /local/projects-t3/<project>

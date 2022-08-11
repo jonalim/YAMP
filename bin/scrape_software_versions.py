@@ -14,7 +14,7 @@ regexes = {
     'MultiQC': ['v_multiqc.txt', r"(\S+)"]
 }
 results = OrderedDict()
-results['MD Genomics Metagenomic Analysis Pipeline'] = '<span style="color:#999999;\">N/A</span>'
+results['Pipeline'] = '<span style="color:#999999;\">N/A</span>'
 results['Nextflow'] = '<span style="color:#999999;\">N/A</span>'
 results['FastQC'] = '<span style="color:#999999;\">N/A</span>'
 results['BBmap'] = '<span style="color:#999999;\">N/A</span>'

@@ -1,0 +1,1 @@
+/autofs/projects-t3/MSL/pipelines/packages/bbmap/clumpify.sh

@@ -2,3 +2,6 @@
     .dl-horizontal dt{width:200px;}
     .dl-horizontal dd{margin-left:220px}
 } 
+.mqc_mplplot img {
+    image-rendering: -webkit-optimize-contrast;
+}
