@@ -42,52 +42,55 @@ Copyright (C) 2017-2021    Dr Alessia Visconti
 This pipeline is distributed in the hope that it will be useful
 but WITHOUT ANY WARRANTY. See the GNU GPL v3.0 for more details.
 
-  Usage:
-  nextflow run YAMP.nf --reads1 R1 --reads2 R2 --prefix prefix --outdir path [options]
+Usage:
+nextflow run YAMP.nf --indir <path> -profile {base,test} [options]
 
-  Mandatory arguments:
-    --reads1   R1      Forward (if paired-end) OR all reads (if single-end) file path
-    [--reads2] R2      Reverse reads file path (only if paired-end library layout)
-    --prefix   prefix  Prefix used to name the result files
-    --outdir   path    Output directory (will be outdir/prefix/)
+Mandatory arguments:
+--indir=path                Input directory
+--outdir=path               Output directory
 
-  Profiles:
-    --profile base,conda,sge    Profile for all MD Genomics analysis.
-	--profile test,conda,sge	Profile for validation runs
+Profiles: 
+At the very least, this pipeline must use either the 'base' or 'test' profile.
+-profile base,conda,sge     Profile for all MD Genomics analysis. Sets --outdir to the value of --indir,
+                            though this can be overriden.
+-profile test,conda,sge	    Profile for validation runs
 
-  Other options:
-  Parameters for removing synthetic contaminants:
-    --qin                 <33|64> Input quality offset
-    --artefacts           path    FASTA file with artefacts
-    --phix174ill          path    FASTA file with phix174_ill
+Other options:
+--only_samples=tsv		    Only process the samples found in the provided file. This file should be a 
+                            TSV with each sample name at the start of each line, without a header.
+--combine_multiqc			Gather existing summary stats in the project directory and combine them with
+                            new data files to create a unified MultiQC report. Any new data for samples 
+                            that were previously processed will override old data. NB: Running this 
+                            pipeline twice in the same directory will ALWAYS overwrite any existing 
+                            files, including the summary_stats.txt and qc_stats.txt files. Before 
+                            running the pipeline in a directory containing existing data, back up the 
+                            existing files.
 
-  Parameters for adapter/quality trimming:
-    --phred               value   regions with average quality BELOW this will be trimmed
-    --minlength           value   reads shorter than this after trimming will be discarded
-    --adapters            path    FASTA file with adapters
+Parameters for all quality control (deduplication, synthetic contaminant removal, trimming, host
+decontamination):
+--qin=<33|64>               Input quality offset
 
-  Parameters for decontamination:
-    --foreign_genome_ref  path    folder for for contaminant (pan)genome (directory of bowtie2 indexes)
+Parameters for removing synthetic contaminants:
+--artefacts=fasta           FASTA file with artefacts
+--phix174ill=fasta          FASTA file with phix174_ill genome
 
-  MetaPhlAn parameters for taxa profiling:
-    --metaphlan_databases path    folder for the MetaPhlAn database
-    --bt2options          value   BowTie2 options
+Parameters for adapter/quality trimming:
+--phred=qual                regions with average quality BELOW this will be trimmed
+--minlength=length          reads shorter than this after trimming will be discarded
+--adapters=fasta            FASTA file with adapters
 
-  HUMANn parameters for functional profiling:
-    --chocophlan          path    folder for the ChocoPhlAn database
-    --uniref              path      folder for the UniRef database
-  
-  --only_samples		  path		Changes the way in which this pipeline finds samples to process.
-									The pipeline will only process the samples listed in the file
-									provided as the value of this option. This file should be a TSV with
-									each sample name at the start of each line, without a header.
+Parameters for host decontamination:
+--foreign_genome_ref=path   folder for for contaminant (pan)genome (directory of bowtie2 indexes)
 
-  --combine_multiqc					Gather existing summary stats in the project directory and combine them with new
-									data files to create a unified MultiQC report. Any new data for samples that
-									were previously processed will override old data. NB: Running this pipeline
-									twice in the same directory will ALWAYS overwrite any existing files, including the
-									summary_stats.txt file. Before running the pipeline in a directory containing
-									existing data, back up the summary_stats.txt file.
+MetaPhlAn parameters for taxa profiling:
+--metaphlan_databases=path  folder for the MetaPhlAn database
+--bt2options="options"      BowTie2 options
+
+HUMANn parameters for functional profiling:
+--chocophlan=path           folder for the ChocoPhlAn database
+--uniref=path               folder for the UniRef database
+--keep_humann_temp_output   Create the files that indicate the gene mappings of individual reads. See 
+                            https://github.com/biobakery/humann#4-intermediate-temp-output-files.
 
 MD Genomics Metagenomic Analysis Pipeline supports FASTQ and compressed FASTQ files.
 """
@@ -130,7 +133,7 @@ if (params.qin != 33 && params.qin != 64) {
 
 //--reads2 can be omitted when the library layout is "single" (indeed it specifies single-end
 //sequencing)
-// if (!params.skip_preprocess && !params.singleEnd && (params.reads2 == "null") ) {
+// if (!params.skip_quality_control && !params.singleEnd && (params.reads2 == "null") ) {
 //     exit 1, "If dealing with paired-end reads, please set the reads2 parameters\nif dealing with single-end reads, please set the library layout to 'single'"
 // }
 
@@ -177,7 +180,7 @@ summary['User name'] = System.getProperty("user.name") //User's account name
 summary['Container Engine'] = workflow.containerEngine
 if(workflow.containerEngine) summary['Container'] = workflow.container
 
-if (!params.skip_preprocess)
+if (!params.skip_quality_control)
 {
     if (workflow.containerEngine == 'singularity') {
         summary['FastQC'] = "https://depot.galaxyproject.org/singularity/fastqc:0.11.9--0"
@@ -220,7 +223,7 @@ summary['Running parameters'] = workflow.commandLine
 summary['Layout'] = 'Paired-End'
 // summary['Layout'] = params.singleEnd ? 'Single-End' : 'Paired-End'
 
-if (!params.skip_preprocess)
+if (!params.skip_quality_control)
 {
     // if (!params.singleEnd)
     // {
@@ -368,25 +371,32 @@ if (params.foreign_genome_ref == "") {
 }
 
 
-if(params.only_samples) {
+if (params.only_samples) {
     // Load samples from this manifest into a glob pattern
     glob_pattern = "${params.indir}/{"
     file(params.only_samples, checkIfExists: true)
         .readLines()
         .each { it ->
-            samplename = (it =~ /^(\S+)/)[0][1] // FIXME doens't work when last line of file is blank
-            if(file("${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz").size() != 2) {
-                raise Exception("Couldn't find raw files for ${samplename}. Glob pattern: ${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz.")
+            matcher = it =~ /^(\S+)/
+            if (matcher) {
+                samplename = matcher[0][1]
+                if (file("${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz").size() != 2) {
+                    raise Exception("Couldn't find raw files for ${samplename}. Glob pattern: ${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz.")
+                }
+                glob_pattern += samplename + ','
             }
-            glob_pattern += samplename + ","
         }
     glob_pattern = StringUtils.chop(glob_pattern)
-    glob_pattern += "}/ILLUMINA_DATA/*_R{1,2}.fastq.gz"
+    glob_pattern += '}/ILLUMINA_DATA/*_R{1,2}.fastq.gz'
+    if (glob_pattern == "${params.indir}/{}/ILLUMINA_DATA/*_R{1,2}.fastq.gz") {
+        raise Exception("Couldn't parse ${params.only_samples}. The file must have sample directory names at the start of each line, with any other fields delimited by some whitespace character, and no header.")
+    }
 } else  {
     glob_pattern = "${params.indir}/*/ILLUMINA_DATA/*_R{1,2}.fastq.gz"
 }
 Channel.fromFilePairs(glob_pattern, size: -1) { file -> file.getParent().getParent().getName() }
         .set { to_combine_reads }
+
 
 // Defines channels for resources file
 artefacts = file(params.artefacts, type: "file", checkIfExists: true )
@@ -437,7 +447,7 @@ process merge_paired_end_reads {
     using given genomes.
 */
 
-process preprocess {
+process quality_control {
     tag "$name"
 
     publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', pattern: "*.fq.gz", overwrite: true
@@ -461,7 +471,7 @@ process preprocess {
     // parameters params.singleEnd, params.qc_matepairs, params.dedup, params.mode come into effect here
 
     when:
-    !params.skip_preprocess
+    !params.skip_quality_control
 
     script:
     // // When paired-end are used, decontamination is carried on independently on paired reads
@@ -479,27 +489,16 @@ process preprocess {
     clumpify.sh -Xmx\"\$maxmem\" in=${name}.fq.gz out=\"${name}.dedup.fq.gz\" qin=$params.qin dedupe \\
         reorder subs=0 threads=${task.cpus} &> 01_dedup_log.txt
 
-    # MultiQC doesn't have a module for clumpify yet. As a consequence, I
-    # had to create a YAML file with all the info I need via a bash script
-    #mkdir dedup
-    #bash scrape_dedup_log.sh > dedup/${name}.yaml
-    # bash scrape_dedup_log.sh 01_dedup_log.txt ${name} > 01_dedup_log.txt # convert to MQC table format
-
     # remove synthetic contaminants
     bbduk.sh -Xmx\"\$maxmem\" in=\"${name}.dedup.fq.gz\" \\
         out=\"${name}.no_synthetic_contaminants.fq.gz\" k=31 ref=$phix174ill,$artefacts \\
         qin=$params.qin ordered=t threads=${task.cpus} ow &> 02_syndecontam_log.txt
     rm \"${name}.dedup.fq.gz\"
-    # rm \"${name}_dedup_R2.fq.gz\"
-
-    # MultiQC doesn't have a module for bbduk yet. As a consequence, I
-    # had to create a YAML file with all the info I need via a bash script
-    #mkdir syndecontam
-    #bash scrape_remove_synthetic_contaminants_log.sh > syndecontam/${name}.yaml
 
     # trim
     kneaddata -i \"${name}.no_synthetic_contaminants.fq.gz\" \\
         -o ./ --output-prefix=\"${name}\" --remove-intermediate-output --log 03_trim+hostremove_log.txt \\
+        -q phred$params.qin \\
         --trimmomatic-options="ILLUMINACLIP:$adapters:2:30:10 SLIDINGWINDOW:4:$params.phred MINLEN:$params.minlength" \\
         -db $ref_foreign_genome \\
         --max-memory \"\$maxmem\" --threads=${task.cpus}
@@ -513,7 +512,7 @@ process preprocess {
 }
 
 
-// if(params.skip_preprocess) {
+// if(params.skip_quality_control) {
 // 	raw_reads_to_profile_taxa.mix(qcd_reads_to_profile_taxa)
 // 		.set{to_profile_taxa}
 // }
@@ -744,7 +743,8 @@ process profile_function {
         saveAs: {
             filename -> f = new File(filename)
             f.name
-        }, overwrite: true
+        }, overwrite: true,
+        enabled: params.keep_humann_temp_output
 
     input:
     tuple val(name), file(reads), file(metaphlan_bug_list) from to_profile_function
@@ -753,7 +753,7 @@ process profile_function {
 
     output:
     tuple val(name), path("*.HUMAnN.log") into profile_functions_log
-    path "${name}_humann_temp/*"
+    path("${name}_humann_temp/*"), optional: ! params.keep_humann_temp_output
     file "*_genefamilies.tsv" into humann_gene_families
     file "*_pathcoverage.tsv" into humann_path_coverage
     file "*_pathabundance.tsv" into humann_path_abundance
@@ -763,25 +763,28 @@ process profile_function {
 
     script:
     """
-    #HUMAnN will uses the list of species detected by the profile_taxa process
-	
-	if [[ -n "$metaphlan_bug_list" ]]; then
-		humann --input $reads --output . --output-basename ${name} --taxonomic-profile $metaphlan_bug_list \
-			--nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads \
-			${task.cpus} --memory-use maximum &> ${name}.HUMAnN.log
-	else
-		humann --input $reads --output . --output-basename ${name} \
-			--nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads \
-			${task.cpus} --memory-use maximum &> ${name}.HUMAnN.log
-	fi
-    
-    rm ${name}_humann_temp/*.bt2
+	options=()
+    if [[ -n "$metaphlan_bug_list" ]]; then
+        #HUMAnN will uses the list of species detected by the profile_taxa process
+        options+=("--taxonomic-profile $metaphlan_bug_list")
+    fi
+    if [[ "$params.keep_humann_temp_output" == "false" ]]; then
+        options+=("--remove-temp-output")
+    fi
 
-    shopt -s nullglob
-    for file in ${name}_humann_temp/*.sam; do bgzip \$file --compress-level 9; done
-    for file in ${name}_humann_temp/*.ffn; do bgzip \$file --compress-level 9; done
-    for file in ${name}_humann_temp/*.tsv; do bgzip \$file --compress-level 9; done
-    for file in ${name}_humann_temp/*.fa; do bgzip \$file --compress-level 9; done
+    humann --input $reads --output . --output-basename ${name} \
+        --nucleotide-database $chocophlan --protein-database $uniref --pathways metacyc --threads \
+        ${task.cpus} --memory-use maximum &> ${name}.HUMAnN.log \${options[*]}
+	
+    if [[ "$params.keep_humann_temp_output" == "true" ]]; then
+        rm ${name}_humann_temp/*.bt2
+
+        shopt -s nullglob
+        for file in ${name}_humann_temp/*.sam; do bgzip \$file --compress-level 9; done
+        for file in ${name}_humann_temp/*.ffn; do bgzip \$file --compress-level 9; done
+        for file in ${name}_humann_temp/*.tsv; do bgzip \$file --compress-level 9; done
+        for file in ${name}_humann_temp/*.fa; do bgzip \$file --compress-level 9; done
+    fi
      """
 }
 
@@ -899,7 +902,7 @@ process hclust_functional_profiles {
     """
 }
 
-// if(params.skip_preprocess) {
+// if(params.skip_quality_control) {
 // 	all_sample_names.map{ it -> [it, "", "", ""] }
 // 		.set{ log_tuple_1 }
 // } else {
@@ -1011,7 +1014,7 @@ process sample_multiqc_logging {
 
 // These skip-parameters ...how do they interact with --only-samples?
 // When ready...fix this. please. skip means to change the DSL flow so that it's as if the process wasn't done at all.
-// if(params.skip_preprocess) {
+// if(params.skip_quality_control) {
 //     Channel.fromPath("${params.indir}/*/ANALYSIS/01_dedup_log.txt")
 //         .set { dedup_log }
 //     Channel.fromPath("${params.indir}/*/ANALYSIS/02_syndecontam_log.txt")
