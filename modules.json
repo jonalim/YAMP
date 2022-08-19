@@ -1,0 +1,11 @@
+{
+    "name": "Metagenomic Pipeline",
+    "homePage": "https://www.igs.umaryland.edu/services/cores.php",
+    "repos": {
+        "nf-core/modules": {
+            "custom/dumpsoftwareversions": {
+                "git_sha": "e5b44499efcf6f7fb24874886bac60591c5d94dd"
+            }
+        }
+    }
+}
