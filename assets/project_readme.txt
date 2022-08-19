@@ -10,6 +10,7 @@ ANALYSIS
 - 03_syndecontam_log.txt - Log file from BBDuk.
 - 04_trim+hostremove_log.txt - Log file from Kneaddata.
 - 05_*_QCd.fq.gz - Quality-controlled reads.
+- 05_contamination.fq.gz - Host reads removed by Kneaddata (Trimmomatic)
 - 05_qc_stats.txt - Summary of stats extracted from tool logs.
 - 05_fastqc - Quality reports on QC'd reads.
 

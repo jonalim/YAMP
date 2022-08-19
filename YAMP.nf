@@ -403,13 +403,14 @@ process preprocess {
 	tag "$name"
 
 	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', overwrite: true, 
-		pattern: "*.{txt,.gz}",
+		pattern: "*{txt,gz}",
 		saveAs: { fn -> 
 			[
 				"dedup_log.txt": "02", 
 				"syndecontam_log.txt": "03", 
 				"trim+hostremove_log.txt": "04", 
-				"QCd.fq.gz": "05"
+				"QCd.fq.gz": "05",
+				"contamination.fq.gz": "05"
 			]["$fn"] + "_${fn}" 
 		}
 
@@ -425,6 +426,7 @@ process preprocess {
 	tuple val(name), path("syndecontam_log.txt") into synthetic_contaminants_log
 	tuple val(name), path("trim+hostremove_log.txt") into trim_decontam_log
 	tuple val(name), path("QCd.fq.gz") into qcd_reads_to_qa, to_profile_taxa
+	path "contamination.fq.gz"
 	path "versions.yml" into preprocess_versions
 
 	// parameters params.singleEnd, params.qc_matepairs, params.dedup, params.mode come into effect here
@@ -465,7 +467,7 @@ process preprocess {
 	gzip \"${name}.fastq\" --stdout > \"QCd.fq.gz\" && rm \"${name}.fastq\" # gzip final file
 	foreign_genome_fn=\$( basename $ref_foreign_genome/*.rev.1.bt2 )
 	foreign_name=\${foreign_genome_fn%.rev.1.bt2}
-	gzip \"${name}_\${foreign_name}_bowtie2_contam.fastq\" --stdout > \"${name}.contamination.fq.gz\" \\
+	gzip \"${name}_\${foreign_name}_bowtie2_contam.fastq\" --stdout > \"contamination.fq.gz\" \\
 		&& rm \"${name}_\${foreign_name}_bowtie2_contam.fastq\"
 
 	cat <<-END_VERSIONS > versions.yml
