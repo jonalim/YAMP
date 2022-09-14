@@ -326,7 +326,8 @@ if (params.only_samples) {
 			if (matcher) {
 				samplename = matcher[0][1]
 				if (file("${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz").size() != 2) {
-					raise Exception("Couldn't find raw files for ${samplename}. Glob pattern: ${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz.")
+					println("Couldn't find raw files for ${samplename}. Glob pattern: ${params.indir}/${samplename}/ILLUMINA_DATA/*_R{1,2}.fastq.gz.")
+					System.exit(1)
 				}
 				glob_pattern += samplename + ','
 			}
@@ -334,14 +335,14 @@ if (params.only_samples) {
 	glob_pattern = StringUtils.chop(glob_pattern)
 	glob_pattern += '}/ILLUMINA_DATA/*_R{1,2}.fastq.gz'
 	if (glob_pattern == "${params.indir}/{}/ILLUMINA_DATA/*_R{1,2}.fastq.gz") {
-		raise Exception("Couldn't parse ${params.only_samples}. The file must have sample directory names at the start of each line, with any other fields delimited by some whitespace character, and no header.")
+		println("Couldn't parse ${params.only_samples}. The file must have sample directory names at the start of each line, with any other fields delimited by some whitespace character, and no header.")
+		System.exit(1)
 	}
 } else  {
 	glob_pattern = "${params.indir}/*/ILLUMINA_DATA/*_R{1,2}.fastq.gz"
 }
 Channel.fromFilePairs(glob_pattern, size: -1) { file -> file.getParent().getParent().getName() }
 		.set { to_combine_reads }
-
 
 // Defines channels for resources file
 artefacts = file(params.artefacts, type: "file", checkIfExists: true )
@@ -403,14 +404,14 @@ process preprocess {
 	tag "$name"
 
 	publishDir "${params.outdir}/${name}/ANALYSIS/", mode: 'link', overwrite: true, 
-		pattern: "*{txt,gz}",
+		pattern: "*.{txt,gz}",
 		saveAs: { fn -> 
 			[
 				"dedup_log.txt": "02", 
 				"syndecontam_log.txt": "03", 
 				"trim+hostremove_log.txt": "04", 
 				"QCd.fq.gz": "05",
-				"contamination.fq.gz": "05"
+				"host.fq.gz": "05"
 			]["$fn"] + "_${fn}" 
 		}
 
@@ -426,7 +427,7 @@ process preprocess {
 	tuple val(name), path("syndecontam_log.txt") into synthetic_contaminants_log
 	tuple val(name), path("trim+hostremove_log.txt") into trim_decontam_log
 	tuple val(name), path("QCd.fq.gz") into qcd_reads_to_qa, to_profile_taxa
-	path "contamination.fq.gz"
+	path("host.fq.gz")
 	path "versions.yml" into preprocess_versions
 
 	// parameters params.singleEnd, params.qc_matepairs, params.dedup, params.mode come into effect here
@@ -467,7 +468,7 @@ process preprocess {
 	gzip \"${name}.fastq\" --stdout > \"QCd.fq.gz\" && rm \"${name}.fastq\" # gzip final file
 	foreign_genome_fn=\$( basename $ref_foreign_genome/*.rev.1.bt2 )
 	foreign_name=\${foreign_genome_fn%.rev.1.bt2}
-	gzip \"${name}_\${foreign_name}_bowtie2_contam.fastq\" --stdout > \"contamination.fq.gz\" \\
+	gzip \"${name}_\${foreign_name}_bowtie2_contam.fastq\" --stdout > \"host.fq.gz\" \\
 		&& rm \"${name}_\${foreign_name}_bowtie2_contam.fastq\"
 
 	cat <<-END_VERSIONS > versions.yml
@@ -561,7 +562,7 @@ process profile_taxa {
 
 	output:
 	tuple val(name), path("*.biom") into to_alpha_diversity
-	file("*.metaphlan_bugs_list.tsv") into to_collect_taxonomic_profiles, nSamples
+	file("*.metaphlan_bugs_list.tsv") into profile_taxa_bugs_lists_1, profile_taxa_bugs_lists_2
 	tuple val(name), path(reads), path("*.metaphlan_bugs_list.tsv") into to_profile_function
 	tuple val(name), path("${name}.metaphlan_bugs_list.tsv") into profile_taxa_log
 	path "versions.yml" into profile_taxa_versions
@@ -593,10 +594,10 @@ ch_versions = ch_versions.mix(profile_taxa_versions)
 
 if (params.skip_profile_taxa) {
 	Channel.fromPath("${params.indir}/*/ANALYSIS/*.metaphlan_bugs_list.tsv")
-		.set { to_collect_taxonomic_profiles; nSamples }
+		.into { profile_taxa_bugs_lists_1; profile_taxa_bugs_lists_2 }
 }
 
-nSamples = nSamples.collect().count()
+profile_taxa_bugs_lists_2.collect().count().set{nSamples}
 
 process collect_taxonomic_profiles {
 	label 'biobakery'
@@ -610,7 +611,7 @@ process collect_taxonomic_profiles {
 		}
 
 	input:
-	file '*' from to_collect_taxonomic_profiles.collect()
+	file '*' from profile_taxa_bugs_lists_1.collect()
 
 	output:
 	file('merged_metaphlan_abundance_table.txt')
@@ -655,7 +656,7 @@ process hclust_taxonomic_profiles {
 
 	hclust2.py -i ${table_species} \\
 		-o metaphlan.species.top50.hclust2.png --skip_rows 0 --ftop 50 \\
-		--f_dist_f cosine --s_dist_f braycurtis --slinkage complete --no_fclustering \\
+		--f_dist_f cosine --s_dist_f braycurtis --slinkage centroid --no_fclustering \\
 		--sqrt_scale \\
 		--flabel_size 4 --no_slabels --max_flabel_len 100 \\
 		--title "% Relative abundance" --dpi 300 --cell_aspect_ratio \$aspect
@@ -754,7 +755,7 @@ process profile_function {
 	output:
 	tuple val(name), path("*.HUMAnN.log") into profile_functions_log
 	path("${name}_humann_temp/*"), optional: ! params.keep_humann_temp_output
-	file "*_genefamilies.tsv" into humann_gene_families
+	file "*_genefamilies.tsv" into humann_gene_families, humann_gene_families_ram_estimator
 	file "*_pathcoverage.tsv" into humann_path_coverage
 	file "*_pathabundance.tsv" into humann_path_abundance
 	path "versions.yml" into profile_function_versions
@@ -795,9 +796,11 @@ process profile_function {
 	"""
 }
 ch_versions = ch_versions.mix(profile_function_versions)
+humann_gene_families_ram_estimator.flatMap{myPath -> myPath.size()}.sum().set {humann_gene_families_total_bytes}
 
 process collect_functional_profiles {
 	label 'biobakery'
+	memory { ((int) ( bytes * 19.12 / 1000000000) + 1 + "GB")}
 
 	publishDir "${params.outdir}", mode: 'link', overwrite: true,
 		pattern: "{all_genefamilies.*.tsv,all_pathabundance.*.tsv,all_pathcoverage.*tsv}",
@@ -812,13 +815,14 @@ process collect_functional_profiles {
 	}
 
 	input:
-	file('*') from humann_gene_families.collect()
+	path gene_families_tables, stageAs: '*' from humann_gene_families.collect()
+	val(bytes) from humann_gene_families_total_bytes
 	file('*') from humann_path_coverage.collect()
 	file('*') from humann_path_abundance.collect()
 
 	output:
 	path('*.tsv') into collected_functional_profiles
-	path('all_genefamilies.copm.stratified.tsv') into gene_fams_to_hclust
+	path('all_genefamilies.copm.stratified.tsv') into gene_fams_to_hclust, gene_fams_ram_estimator
 	path('all_pathabundance.copm.unstratified.tsv') into pathabunds_to_hclust
 	path('all_pathcoverage.unstratified.tsv') into pathcovs_to_hclust
 
@@ -828,6 +832,7 @@ process collect_functional_profiles {
 	script:
  /* groovylint-disable-next-line UnnecessaryGString */
 	"""
+	echo "${task.memory}"
 	humann_join_tables -i ./ -o all_genefamilies.rpk.tsv --file_name genefamilies
 	humann_join_tables -i ./ -o all_pathcoverage.tsv --file_name pathcoverage
 	humann_join_tables -i ./ -o all_pathabundance.rpk.tsv --file_name pathabundance
@@ -860,6 +865,7 @@ process collect_functional_profiles {
 
 process hclust_functional_profiles {
 	label 'hclust'
+	memory { ((int) (bytes * 6.78 / 1000000000) + 1 + "GB")}
 
 	publishDir "${params.outdir}", mode: 'link', overwrite: true, saveAs: { fn -> "09_$fn" }
 
@@ -868,6 +874,7 @@ process hclust_functional_profiles {
 	path path_abund_table from pathabunds_to_hclust
 	path path_cov_table from pathcovs_to_hclust
 	val nSamples
+	val(bytes) from humann_gene_families_total_bytes
 
 	output:
 	path '*.png'
@@ -877,6 +884,7 @@ process hclust_functional_profiles {
 
 	script:
 	"""
+	echo "${task.memory}"
 	if [[ \$(awk '{print NF}' ${gene_fam_table} | head -n 2 | tail -n 1) -gt 3 ]]; then
 		cluster_columns=""
 	else
@@ -886,11 +894,13 @@ process hclust_functional_profiles {
 	aspect=\$( echo "$nSamples*0.03" | bc -l | awk '{printf("%d\\n",\$1 + 0.5)}' )
 	aspect=\$( [[ "\$aspect" -gt 9 ]] && echo "9" || echo "\$aspect" ) # bounded to 1 and 9
 	aspect=\$( [[ "\$aspect" -lt 1 ]] && echo "1" || echo "\$aspect" )
-
+	
+	# --s_dist_f seuclidean also seems like a good choice, but canberra distance is already used in 
+	# microbiome research
 	file="$gene_fam_table"
 	hclust2.py -i ${gene_fam_table} -o \${file%.*}.top50.hclust2.png \\
-		--skip_rows 0 --ftop 50 \\
-		\$cluster_columns --f_dist_f cosine --s_dist_f braycurtis --slinkage complete \\
+		--fname_row -1 --skip_rows 0 --ftop 50 \\
+		\$cluster_columns --f_dist_f cosine --s_dist_f canberra --slinkage centroid \\
 		--dpi 300 --sqrt_scale \\
 		--no_slabels --flabel_size 4 --colorbar_font_size 4 --max_flabel_len 100 \\
 		--title "Gene family abundance (copies per million)" --cell_aspect_ratio \$aspect
@@ -900,7 +910,7 @@ process hclust_functional_profiles {
 	grep -vP "(?:^UNMAPPED)|(?:^UNINTEGRATED)" "$path_cov_table" > \${basename}.no-unintegrated.tsv
 	hclust2.py -i \${basename}.no-unintegrated.tsv -o \${basename}.no-unintegrated.top50.hclust2.png \\
 		--fname_row=-1 --ftop 50 \\
-		\$cluster_columns --f_dist_f cosine --s_dist_f cityblock --slinkage complete \\
+		\$cluster_columns --f_dist_f cosine --s_dist_f cityblock --slinkage centroid \\
 		--dpi 300 --sqrt_scale \\
 		--no_slabels --flabel_size 4 --colorbar_font_size 4 --max_flabel_len 100 \\
 		--title "Pathway coverage" --cell_aspect_ratio \$aspect
@@ -908,7 +918,7 @@ process hclust_functional_profiles {
 	file="$path_abund_table"
 	hclust2.py -i "$path_abund_table" -o \${file%.*}.top50.hclust2.png \\
 		--fname_row=-1 --ftop 50 \\
-		\$cluster_columns --f_dist_f cosine --s_dist_f canberra --slinkage complete \\
+		\$cluster_columns --f_dist_f cosine --s_dist_f canberra --slinkage centroid \\
 		--dpi 300 --log_scale \\
 		--no_slabels --flabel_size 4 --colorbar_font_size 4 --max_flabel_len 100 \\
 		--title "Pathway abundance (copies per million)" --cell_aspect_ratio \$aspect
@@ -945,6 +955,9 @@ process sample_multiqc_logging {
 	output:
 	path("qc_stats.txt") into sample_genstats
 	path("profiling_stats.txt") into sample_profilestats
+
+	when:
+	!params.skip_log
 
 	script:
 	"""
@@ -994,8 +1007,10 @@ process sample_multiqc_logging {
 	printf "%s\\t%s\\n" "\\"$name\\"" \${tot_species} >> profiling_stats.txt
 
 	if [[ -n "$humann_log" ]]; then
-		gene_fams_nucleotide=\$(grep "Total gene families from nucleotide alignment:" "$humann_log" | cut -d: -f 2 | sed 's/ //g')
-		unaligned_nucleotide=\$(grep -o "Unaligned reads after nucleotide alignment: [0-9\\.]*" "$humann_log" | grep -o "[0-9\\.]*")
+		# If this line isn't there, then probably Metaphlan (prescreen) found nothing. So, we can say 
+		# that 100% of reads were unaligned at this stage.
+		gene_fams_nucleotide=\$((grep "Total gene families from nucleotide alignment:" "$humann_log" || echo ":0") | cut -d: -f 2 | sed 's/ //g')
+		unaligned_nucleotide=\$(grep -o "Unaligned reads after nucleotide alignment: [0-9\\.]*" "$humann_log" | grep -o "[0-9\\.]*" || echo "100")
 		contributing_nucleotide=\$(echo "100 - \$unaligned_nucleotide" | bc)
 
 		unaligned_final=\$(grep "Unaligned reads after translated alignment:" "$humann_log" | grep -o "[0-9\\.]*")
@@ -1011,7 +1026,7 @@ process sample_multiqc_logging {
 		contributing_final=""
 		unmapped=""
 	fi
-	sedstr="s/(\\"$name\\"\\t.*)\$/\\1\\t\${gene_fams_nucleotide}\\t\${contributing_nucleotide}\\t\${gene_fams_final}\\t\${nContributing_final}\\t\${contributing_final}\\t\${unmapped}/"
+	sedstr="s/(\\"$name\\"\\t.*)\$/\\1\\t\${gene_fams_nucleotide:-0}\\t\${contributing_nucleotide}\\t\${gene_fams_final}\\t\${nContributing_final}\\t\${contributing_final}\\t\${unmapped}/"
 	sed -i -E "\${sedstr}" profiling_stats.txt
 	"""
 }
@@ -1162,6 +1177,8 @@ process log {
 	path("*_report.html")
 	path("*_data/*")
 
+	when:
+	!params.skip_log
 
 	script:
 	rtitle = custom_runName ? "--title \"$custom_runName\"" : ''
