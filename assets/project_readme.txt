@@ -9,17 +9,17 @@ ANALYSIS
 - 02_dedup_log.txt - Log file from Clumpify.
 - 03_syndecontam_log.txt - Log file from BBDuk.
 - 04_trim+hostremove_log.txt - Log file from Kneaddata.
-- 05_*_QCd.fq.gz - Quality-controlled reads.
+- 05_QCd.fq.gz - Quality-controlled reads.
 - 05_qc_stats.txt - Summary of stats extracted from tool logs.
 - 05_fastqc - Quality reports on QC'd reads.
 
-- 06_*_metaphlan_bugs_list.tsv - Sample relative abundances calculated by 
+- 06_*.metaphlan_bugs_list.tsv - Sample relative abundances calculated by 
 	Metaphlan. (https://huttenhower.sph.harvard.edu/metaphlan)
 - 06_*.biom - Sample relative abundances calculated by Metaphlan.
 	(https://huttenhower.sph.harvard.edu/metaphlan)
-- 06_*_alpha-diversity.tsv - Alpha-diversity metrics calculated using QIIME2.
-- 07_*_HUMAnN.log - HUMAnN log file.
-- 07_*_gene_families.tsv - Abundance-RPKs of gene families.
+- 06_*.alpha-diversity.tsv - Alpha-diversity metrics calculated using QIIME2.
+- 07_*.HUMAnN.log - HUMAnN log file.
+- 07_*_genefamilies.tsv - Abundance-RPKs of gene families.
 	(https://github.com/biobakery/humann#1-gene-families-file)
 - 07_*_pathabundance.tsv - Sample pathway abundance in RPK.
 	(https://github.com/biobakery/humann#2-pathway-abundance-file)
@@ -61,7 +61,7 @@ PROJECT DIRECTORY
 	taxonomically stratified gene families.
 09_all_pathabundance.copm.unstratified.top50.hclust2.png - Abundance heatmap of 
 	top 50 most abundant pathways.
-09_all_pathcoverage.unstratified.top50.hclust2.png - Heatmap of coverage values
+09_all_pathcoverage.unstratified.no-unintegrated.top50.hclust2.png - Heatmap of coverage values
 	of top 50 most covered pathways. UNMAPPED and UNINTEGRATED values have been
 	omitted as they are meaningless. 
 
@@ -69,7 +69,7 @@ PROJECT DIRECTORY
 10_profiling_stats.txt - Project-level table summarizing taxonomic and 
 	functional profiling.
 10_*_multiqc_report.html - MultiQC report summarizing throughput and profiling.
-10_*_multiqc_data/ - Additional data curated by MultiQC.
+10_*_multiqc_report_data/ - Additional data curated by MultiQC.
 
 
 Where indicated that data are in copies per million, depth-normalization was 
